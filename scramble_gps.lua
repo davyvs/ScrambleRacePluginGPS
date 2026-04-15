@@ -1,6 +1,6 @@
 -- ============================================================
--- Scramble GPS v2 — ChilledDVS Shutoko Servers
--- Manual picker + compass arrow + optional !gps command
+-- Scramble GPS v3 — ChilledDVS Shutoko Servers
+-- Interactive picker via CSP Extras panel + compass HUD
 -- ============================================================
 
 local destinations = {
@@ -15,7 +15,6 @@ local destinations = {
     ["Yokohama - Daikoku"]       = vec3(-6147.93,  29.65,  13722.33),
 }
 
--- Sorted list for consistent display
 local destNames = {}
 for name in pairs(destinations) do destNames[#destNames + 1] = name end
 table.sort(destNames)
@@ -25,14 +24,12 @@ local currentDest     = nil
 local currentDestName = ""
 local fadeAlpha       = 0.0
 local fadeTarget      = 0.0
-local pickerOpen      = false
 
 local function setDest(name)
     if destinations[name] then
         currentDest     = destinations[name]
         currentDestName = name
         fadeTarget      = 1.0
-        pickerOpen      = false
     end
 end
 
@@ -40,19 +37,16 @@ local function clearDest()
     currentDest     = nil
     currentDestName = ""
     fadeTarget      = 0.0
-    pickerOpen      = false
 end
 
--- ── Optional: auto-detect via chat ───────────────────────
--- Fires for player-typed messages; server plugin messages not supported
+-- ── Auto-detect !gps <name> from player chat ─────────────
 local function tryChatDest(message)
     if not message then return end
     local clean = message:gsub("%b[]", ""):gsub("[%z\1-\31\127]", "")
-    clean = clean:match("^%s*(.-)%s*$") or ""
-    -- Support: admin types  !gps Shibaura PA  in player chat
+    clean = (clean:match("^%s*(.-)%s*$")) or ""
     local dest = clean:match("!gps%s+(.+)") or clean:match("Race to (.+)!")
     if dest then
-        dest = dest:match("^%s*(.-)%s*$")
+        dest = (dest:match("^%s*(.-)%s*$")) or dest
         if destinations[dest] then setDest(dest) end
     end
 end
@@ -62,7 +56,55 @@ if type(ac.onChatMessage) == "function" then
 end
 function script.onChatMessage(_, message) tryChatDest(message) end
 
--- ── Update: arrival check ─────────────────────────────────
+-- ── Interactive GPS picker in CSP Extras panel ────────────
+-- Open chat app → click the compass icon → pick your destination
+ui.registerOnlineExtra(
+    ui.Icons.Navigation,
+    "Scramble GPS",
+    function() return true end,
+    function()
+        local closePanel = false
+
+        ui.pushFont(ui.Font.Small)
+        if currentDestName ~= "" then
+            ui.textColored("Active: " .. currentDestName, rgbm(0.3, 1.0, 0.3, 1))
+        else
+            ui.textColored("No destination set", rgbm(0.7, 0.7, 0.7, 1))
+        end
+        ui.popFont()
+
+        ui.separator()
+        ui.pushFont(ui.Font.Small)
+        ui.text("Pick a destination:")
+        ui.popFont()
+
+        for _, name in ipairs(destNames) do
+            local isActive = (name == currentDestName)
+            local label    = isActive and ("  >> " .. name .. " <<") or ("     " .. name)
+            if ui.button(label, vec2(-1, 0)) then
+                setDest(name)
+                closePanel = true
+            end
+        end
+
+        if currentDestName ~= "" then
+            ui.separator()
+            if ui.button("  [ Clear GPS ]", vec2(-1, 0)) then
+                clearDest()
+                closePanel = true
+            end
+        end
+
+        ui.separator()
+        if ui.button("  [ Close ]", vec2(-1, 0)) then
+            closePanel = true
+        end
+
+        return closePanel
+    end
+)
+
+-- ── Per-frame: arrival check + fade ──────────────────────
 function script.update(dt)
     fadeAlpha = fadeAlpha + (fadeTarget - fadeAlpha) * math.min(dt * 4, 1)
     if not currentDest then return end
@@ -73,64 +115,24 @@ function script.update(dt)
     end
 end
 
--- ── HUD ───────────────────────────────────────────────────
+-- ── HUD: compass arrow + status ───────────────────────────
 function script.drawUI()
+    if fadeAlpha < 0.01 then return end
 
-    -- ── Destination picker window ─────────────────────────
-    local ROW_H  = 22
-    local PAD    = 6
-    local BTN_W  = 170
-    local rows   = pickerOpen and (#destNames + 2) or 1
-    local winW   = BTN_W + PAD * 2
-    local winH   = rows * ROW_H + PAD * 2
+    local car = ac.getCar(0)
+    if not car then return end
 
-    -- Position: bottom-right
     local uiState = ac.getUI and ac.getUI()
     local sx = uiState and uiState.windowSize.x or 1920
     local sy = uiState and uiState.windowSize.y or 1080
-    local wx = sx - winW - 10
-    local wy = sy - winH - 10
-
-    ui.toolWindow('scrambleGPS', vec2(wx, wy), vec2(winW, winH), function()
-        -- Header button (toggle)
-        local hdrLabel = currentDestName ~= "" and ("GPS \xe2\x96\xb6 " .. currentDestName) or "GPS \xe2\x96\xbc Pick destination"
-        if currentDestName ~= "" then
-            hdrLabel = "GPS \xe2\x96\xb6 " .. currentDestName
-        end
-        if ui.button(pickerOpen and "[ close ]" or hdrLabel, vec2(BTN_W, ROW_H - 2)) then
-            pickerOpen = not pickerOpen
-        end
-
-        if pickerOpen then
-            ui.separator()
-            for _, name in ipairs(destNames) do
-                local label = (name == currentDestName) and ("* " .. name) or ("  " .. name)
-                if ui.button(label, vec2(BTN_W, ROW_H - 2)) then
-                    setDest(name)
-                end
-            end
-            if currentDestName ~= "" then
-                ui.separator()
-                if ui.button("  [ Clear GPS ]", vec2(BTN_W, ROW_H - 2)) then
-                    clearDest()
-                end
-            end
-        end
-    end)
-
-    -- ── Compass arrow ─────────────────────────────────────
-    if fadeAlpha < 0.01 then return end
-    local car = ac.getCar(0)
-    if not car then return end
 
     local alpha = fadeAlpha
     local pos   = car.position
     local dist  = (pos - currentDest):length()
 
-    -- Arrow circle: bottom-right above the picker
     local cx = sx - 85
-    local cy = sy - winH - 70
-    local r  = 38
+    local cy = sy - 130
+    local r  = 40
 
     local toTarget   = currentDest - pos
     local bearing    = math.atan2(toTarget.x, toTarget.z)
@@ -142,25 +144,35 @@ function script.drawUI()
     local px =  math.cos(relAngle)
     local py =  math.sin(relAngle)
 
-    ui.drawCircleFilled(vec2(cx, cy), r + 5, rgbm(0, 0, 0, 0.65 * alpha), 40)
-    ui.drawCircle(     vec2(cx, cy), r + 5, rgbm(1, 1, 1, 0.25 * alpha), 40, 1.5)
-    ui.drawLine(vec2(cx, cy), vec2(cx + dx*(r-8), cy + dy*(r-8)), rgbm(1, 0.2, 0.2, alpha), 2.5)
+    -- Circle background
+    ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.65 * alpha), 40)
+    ui.drawCircle(      vec2(cx, cy), r + 6, rgbm(1, 1, 1, 0.25 * alpha), 40, 1.5)
 
+    -- Arrow stem
+    ui.drawLine(vec2(cx, cy), vec2(cx + dx*(r-10), cy + dy*(r-10)), rgbm(1, 0.2, 0.2, alpha), 2.5)
+
+    -- Arrow head
     local tipX  = cx + dx * r
     local tipY  = cy + dy * r
-    local baseX = cx + dx * (r - 12)
-    local baseY = cy + dy * (r - 12)
+    local baseX = cx + dx * (r - 13)
+    local baseY = cy + dy * (r - 13)
     ui.drawTriangleFilled(
         vec2(tipX, tipY),
-        vec2(baseX + px*6, baseY + py*6),
-        vec2(baseX - px*6, baseY - py*6),
+        vec2(baseX + px*7, baseY + py*7),
+        vec2(baseX - px*7, baseY - py*7),
         rgbm(1, 0.2, 0.2, alpha))
 
-    -- Distance label
+    -- Destination name
+    ui.setCursor(vec2(cx - 90, cy - r - 24))
+    ui.pushFont(ui.Font.Small)
+    ui.textAligned(currentDestName, vec2(0.5, 0.5), vec2(180, 18))
+    ui.popFont()
+
+    -- Distance
     local distStr = dist >= 1000 and string.format("%.1f km", dist/1000)
                                   or  string.format("%d m",   math.floor(dist + 0.5))
-    ui.setCursor(vec2(cx - 40, cy + r + 6))
+    ui.setCursor(vec2(cx - 45, cy + r + 8))
     ui.pushFont(ui.Font.Small)
-    ui.textAligned(distStr, vec2(0.5, 0.5), vec2(80, 16))
+    ui.textAligned(distStr, vec2(0.5, 0.5), vec2(90, 16))
     ui.popFont()
 end
