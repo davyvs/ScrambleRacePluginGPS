@@ -57,9 +57,10 @@ end
 function script.onChatMessage(_, message) tryChatDest(message) end
 
 -- ── Interactive GPS picker in CSP Extras panel ────────────
--- Open chat app → click the compass icon → pick your destination
+-- Open chat app → click the GPS icon → pick your destination
+local _gpsIcon = (ui.Icons and (ui.Icons.Navigation or ui.Icons.Leaderboard)) or 0
 ui.registerOnlineExtra(
-    ui.Icons.Navigation,
+    _gpsIcon,
     "Scramble GPS",
     function() return true end,
     function()
