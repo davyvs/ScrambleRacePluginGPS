@@ -19,52 +19,42 @@ local currentDest     = nil
 local currentDestName = ""
 local fadeAlpha       = 0.0
 local fadeTarget      = 0.0
-local debugMsg        = "waiting..."
-local debugSub        = ""
+local debugLine1      = "waiting..."
+local debugLine2      = ""
+local msgCount        = 0
 
--- Strip all CSP/BBCODE tags and control characters, trim whitespace
+-- Strip all [...] BBCODE tags and control chars, trim whitespace
 local function cleanMsg(s)
-    s = s:gsub("%b[]", "")               -- remove all [...] blocks
-    s = s:gsub("[%z\1-\31\127]", "")     -- strip control chars (incl. \r \n)
-    return s:match("^%s*(.-)%s*$")       -- trim surrounding whitespace
+    s = s:gsub("%b[]", "")
+    s = s:gsub("[%z\1-\31\127]", "")
+    return s:match("^%s*(.-)%s*$")
 end
 
 local function trySetDest(message)
     local clean = cleanMsg(message)
-    debugSub = ">" .. clean:sub(1, 35)   -- always show what we got
+    msgCount = msgCount + 1
+    debugLine2 = "#" .. msgCount .. " " .. clean:sub(1, 35)
 
-    -- Permissive match: "Race to <name>!" anywhere in string
     local dest = clean:match("Race to (.+)!")
     if dest then
-        dest = dest:match("^%s*(.-)%s*$")  -- trim captured name too
+        dest = dest:match("^%s*(.-)%s*$")
         if destinations[dest] then
             currentDest     = destinations[dest]
             currentDestName = dest
             fadeTarget      = 1.0
-            debugMsg        = "GPS ON"
-            debugSub        = dest
+            debugLine1      = "GPS ON: " .. dest
             return true
         else
-            debugMsg = "unknown dest"
+            debugLine1 = "unknown: [" .. dest .. "]"
         end
-    else
-        debugMsg = "no match"
     end
     return false
 end
 
--- ── Hook: ac.onChatMessage ────────────────────────────────
-if type(ac.onChatMessage) == "function" then
-    ac.onChatMessage(function(carIndex, message, fromServer)
-        trySetDest(message)
-    end)
-    debugMsg = "hook ready"
-else
-    debugMsg = "hook N/A"
-end
-
--- ── Hook: script.onChatMessage (fallback) ─────────────────
+-- ── ONLY script.onChatMessage — no ac.onChatMessage ──────
+-- (Testing whether ac.onChatMessage registration was blocking this)
 function script.onChatMessage(carIndex, message, fromServer)
+    debugLine1 = "cb:" .. tostring(carIndex) .. " srv=" .. tostring(fromServer)
     trySetDest(message)
 end
 
@@ -79,21 +69,20 @@ function script.update(dt)
         currentDest     = nil
         currentDestName = ""
         fadeTarget      = 0.0
-        debugMsg        = "arrived!"
-        debugSub        = ""
+        debugLine1      = "arrived!"
+        debugLine2      = ""
     end
 end
 
 -- ── HUD ───────────────────────────────────────────────────
 function script.drawUI()
-    -- Debug dot
+    -- Debug dot + status
     ui.drawCircleFilled(vec2(30, 200), 6, rgbm(0, 1, 0, 0.8), 12)
-
     ui.pushFont(ui.Font.Tiny)
     ui.setCursor(vec2(5, 210))
-    ui.text(debugMsg)
+    ui.text(debugLine1)
     ui.setCursor(vec2(5, 222))
-    ui.text(debugSub)
+    ui.text(debugLine2)
     ui.popFont()
 
     if fadeAlpha < 0.01 then return end
