@@ -1,7 +1,5 @@
 -- ============================================================
 -- Scramble GPS — ChilledDVS Shutoko Servers
--- Detects "Race to X!" chat messages from ScrambleRacePlugin
--- and shows a compass arrow + distance on the HUD.
 -- ============================================================
 
 local destinations = {
@@ -17,21 +15,31 @@ local destinations = {
 }
 
 local ARRIVAL_DIST = 150
-
 local currentDest     = nil
 local currentDestName = ""
 local fadeAlpha       = 0.0
 local fadeTarget      = 0.0
+local scriptLoaded    = true  -- used for debug dot
 
--- ── Register chat listener at script load ──────────────────
-ac.onChatMessage(function(carIndex, message, fromServer)
+-- ── Try both chat hook approaches ─────────────────────────
+local function handleChat(carIndex, message, fromServer)
     local dest = message:match("^Race to (.+)!$")
     if dest and destinations[dest] then
         currentDest     = destinations[dest]
         currentDestName = dest
         fadeTarget      = 1.0
     end
-end)
+end
+
+-- Method 1: ac.onChatMessage (newer CSP)
+if ac.onChatMessage then
+    ac.onChatMessage(handleChat)
+end
+
+-- Method 2: script.onChatMessage (older CSP)
+function script.onChatMessage(carIndex, message, fromServer)
+    handleChat(carIndex, message, fromServer)
+end
 
 -- ── Per-frame update ───────────────────────────────────────
 function script.update(dt)
@@ -48,6 +56,9 @@ end
 
 -- ── HUD drawing ────────────────────────────────────────────
 function script.drawUI()
+    -- DEBUG: small green dot top-left confirms script is running
+    ui.drawCircleFilled(vec2(30, 200), 6, rgbm(0, 1, 0, 0.8), 12)
+
     if fadeAlpha < 0.01 then return end
 
     local car = ac.getCar(0)
@@ -57,10 +68,9 @@ function script.drawUI()
     local pos   = car.position
     local dist  = currentDest and (pos - currentDest):length() or 0
 
-    -- Fixed bottom-right position (works on any resolution)
     local cx, cy, r = 1830, 960, 45
 
-    -- ── Bearing calculation ────────────────────────────────
+    -- Bearing
     local toTarget   = currentDest and (currentDest - pos) or vec3(0, 0, 1)
     local bearing    = math.atan2(toTarget.x, toTarget.z)
     local carHeading = math.atan2(car.look.x, car.look.z)
@@ -71,19 +81,16 @@ function script.drawUI()
     local px =  math.cos(relAngle)
     local py =  math.sin(relAngle)
 
-    -- ── Background circle ──────────────────────────────────
+    -- Background
     ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.6 * alpha), 40)
     ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 1, 1, 0.3 * alpha), 40, 1.5)
 
-    -- North tick
-    ui.drawLine(vec2(cx, cy - r + 4), vec2(cx, cy - r - 4),
-        rgbm(1, 1, 1, 0.4 * alpha), 1.5)
-
-    -- ── Arrow ──────────────────────────────────────────────
+    -- Arrow shaft
     ui.drawLine(vec2(cx, cy),
         vec2(cx + dx * (r - 10), cy + dy * (r - 10)),
         rgbm(1, 0.2, 0.2, alpha), 3)
 
+    -- Arrowhead
     local tipX  = cx + dx * r
     local tipY  = cy + dy * r
     local baseX = cx + dx * (r - 14)
@@ -94,7 +101,7 @@ function script.drawUI()
         vec2(baseX - px * 7, baseY - py * 7),
         rgbm(1, 0.2, 0.2, alpha))
 
-    -- ── Labels ─────────────────────────────────────────────
+    -- Labels
     local distStr = dist >= 1000
         and string.format("%.1f km", dist / 1000)
         or  string.format("%d m", math.floor(dist + 0.5))
