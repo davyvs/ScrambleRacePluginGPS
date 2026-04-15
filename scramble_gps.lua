@@ -112,6 +112,12 @@ function script.update(dt)
     local car = ac.getCar(0)
     if not car then return end
     if (car.position - currentDest):length() < ARRIVAL_DIST then
+        -- Announce arrival in chat
+        local dest = currentDestName
+        local name = (ac.getDriverName and ac.getDriverName(0)) or "Driver"
+        if type(ac.sendChatMessage) == "function" then
+            ac.sendChatMessage("\xF0\x9F\x8F\x81 " .. name .. " arrived at " .. dest .. "!")
+        end
         clearDest()
     end
 end
