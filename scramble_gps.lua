@@ -20,46 +20,51 @@ local currentDestName = ""
 local fadeAlpha       = 0.0
 local fadeTarget      = 0.0
 local debugMsg        = "waiting..."
-local debugRaw        = ""   -- shows raw message bytes for diagnosis
+local debugSub        = ""
 
--- Strip CSP/AC color and formatting tags: [color=...], [b], [i], etc.
-local function stripTags(s)
-    s = s:gsub("%[/?color[^%]]*%]", "")
-    s = s:gsub("%[/?[biusBIUS]%]", "")
-    s = s:gsub("%[/?size[^%]]*%]", "")
-    s = s:gsub("%[/?url[^%]]*%]", "")
-    return s:match("^%s*(.-)%s*$")  -- trim whitespace
+-- Strip all CSP/BBCODE tags and control characters, trim whitespace
+local function cleanMsg(s)
+    s = s:gsub("%b[]", "")               -- remove all [...] blocks
+    s = s:gsub("[%z\1-\31\127]", "")     -- strip control chars (incl. \r \n)
+    return s:match("^%s*(.-)%s*$")       -- trim surrounding whitespace
 end
 
 local function trySetDest(message)
-    local clean = stripTags(message)
-    local dest  = clean:match("^Race to (.+)!$")
-    if dest and destinations[dest] then
-        currentDest     = destinations[dest]
-        currentDestName = dest
-        fadeTarget      = 1.0
-        debugMsg        = "GPS: " .. dest
-        return true
+    local clean = cleanMsg(message)
+    debugSub = ">" .. clean:sub(1, 35)   -- always show what we got
+
+    -- Permissive match: "Race to <name>!" anywhere in string
+    local dest = clean:match("Race to (.+)!")
+    if dest then
+        dest = dest:match("^%s*(.-)%s*$")  -- trim captured name too
+        if destinations[dest] then
+            currentDest     = destinations[dest]
+            currentDestName = dest
+            fadeTarget      = 1.0
+            debugMsg        = "GPS ON"
+            debugSub        = dest
+            return true
+        else
+            debugMsg = "unknown dest"
+        end
+    else
+        debugMsg = "no match"
     end
-    -- No match — record what we actually got (first 40 chars)
-    debugRaw = "raw:" .. clean:sub(1, 40)
     return false
 end
 
 -- ── Hook: ac.onChatMessage ────────────────────────────────
 if type(ac.onChatMessage) == "function" then
     ac.onChatMessage(function(carIndex, message, fromServer)
-        debugMsg = "hook1 msg recv"
         trySetDest(message)
     end)
-    debugMsg = "hook1 ready"
+    debugMsg = "hook ready"
 else
-    debugMsg = "hook1 N/A"
+    debugMsg = "hook N/A"
 end
 
 -- ── Hook: script.onChatMessage (fallback) ─────────────────
 function script.onChatMessage(carIndex, message, fromServer)
-    debugMsg = "hook2 msg recv"
     trySetDest(message)
 end
 
@@ -75,23 +80,20 @@ function script.update(dt)
         currentDestName = ""
         fadeTarget      = 0.0
         debugMsg        = "arrived!"
-        debugRaw        = ""
+        debugSub        = ""
     end
 end
 
 -- ── HUD ───────────────────────────────────────────────────
 function script.drawUI()
-    -- Debug dot (green = running)
+    -- Debug dot
     ui.drawCircleFilled(vec2(30, 200), 6, rgbm(0, 1, 0, 0.8), 12)
 
-    -- Debug status + raw message dump
-    ui.setCursor(vec2(5, 210))
     ui.pushFont(ui.Font.Tiny)
+    ui.setCursor(vec2(5, 210))
     ui.text(debugMsg)
-    if debugRaw ~= "" then
-        ui.setCursor(vec2(5, 222))
-        ui.text(debugRaw)
-    end
+    ui.setCursor(vec2(5, 222))
+    ui.text(debugSub)
     ui.popFont()
 
     if fadeAlpha < 0.01 then return end
