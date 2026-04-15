@@ -98,6 +98,15 @@ Coordinates can be found using the CSP **Track Coordinates Helper** app in-game.
 
 ---
 
+## Credits
+
+**ScrambleRacePlugin** — the server-side plugin that powers the race system — was created by [srinoob](https://github.com/srinoob).  
+→ [github.com/srinoob/ScrambleRacePlugin](https://github.com/srinoob/ScrambleRacePlugin)
+
+This GPS script is a client-side companion built on top of their work.
+
+---
+
 ## License
 
 MIT — free to use, modify, and redistribute.
