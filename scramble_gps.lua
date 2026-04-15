@@ -16,35 +16,30 @@ local destinations = {
     ["Yokohama - Daikoku"]       = vec3(-6147.93,  29.65,  13722.33),
 }
 
-local ARRIVAL_DIST = 150  -- meters: clear GPS when player arrives this close
+local ARRIVAL_DIST = 150
 
 local currentDest     = nil
 local currentDestName = ""
 local fadeAlpha       = 0.0
 local fadeTarget      = 0.0
 
--- ── Chat hook ──────────────────────────────────────────────
-function script.onChatMessage(carIndex, message, fromServer)
+-- ── Register chat listener at script load ──────────────────
+ac.onChatMessage(function(carIndex, message, fromServer)
     local dest = message:match("^Race to (.+)!$")
     if dest and destinations[dest] then
         currentDest     = destinations[dest]
         currentDestName = dest
         fadeTarget      = 1.0
     end
-end
+end)
 
 -- ── Per-frame update ───────────────────────────────────────
 function script.update(dt)
-    -- Smooth fade in/out
     fadeAlpha = fadeAlpha + (fadeTarget - fadeAlpha) * math.min(dt * 4, 1)
-
     if not currentDest then return end
-
     local car = ac.getCar(0)
     if not car then return end
-
-    local dist = (car.position - currentDest):length()
-    if dist < ARRIVAL_DIST then
+    if (car.position - currentDest):length() < ARRIVAL_DIST then
         currentDest     = nil
         currentDestName = ""
         fadeTarget      = 0.0
@@ -58,48 +53,37 @@ function script.drawUI()
     local car = ac.getCar(0)
     if not car then return end
 
-    local alpha  = fadeAlpha
-    local pos    = car.position
-    local dist   = currentDest and (pos - currentDest):length() or 0
+    local alpha = fadeAlpha
+    local pos   = car.position
+    local dist  = currentDest and (pos - currentDest):length() or 0
 
-    -- Compass center — bottom right corner
-    local sw, sh = ac.windowSize()
-    local cx = sw - 90
-    local cy = sh - 90
-    local r  = 45
+    -- Fixed bottom-right position (works on any resolution)
+    local cx, cy, r = 1830, 960, 45
 
     -- ── Bearing calculation ────────────────────────────────
-    local toTarget  = currentDest and (currentDest - pos) or vec3(0, 0, 1)
-    local bearing   = math.atan2(toTarget.x, toTarget.z)
+    local toTarget   = currentDest and (currentDest - pos) or vec3(0, 0, 1)
+    local bearing    = math.atan2(toTarget.x, toTarget.z)
     local carHeading = math.atan2(car.look.x, car.look.z)
-    local relAngle  = bearing - carHeading
+    local relAngle   = bearing - carHeading
 
-    -- Arrow direction unit vector in screen space
     local dx =  math.sin(relAngle)
     local dy = -math.cos(relAngle)
-    local px =  math.cos(relAngle)  -- perpendicular
+    local px =  math.cos(relAngle)
     local py =  math.sin(relAngle)
 
     -- ── Background circle ──────────────────────────────────
-    ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.55 * alpha), 40)
-    ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 1, 1, 0.25 * alpha), 40, 1.5)
+    ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.6 * alpha), 40)
+    ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 1, 1, 0.3 * alpha), 40, 1.5)
 
-    -- North tick mark
-    ui.drawLine(
-        vec2(cx,     cy - r + 6),
-        vec2(cx,     cy - r - 2),
-        rgbm(1, 1, 1, 0.35 * alpha), 1.5
-    )
+    -- North tick
+    ui.drawLine(vec2(cx, cy - r + 4), vec2(cx, cy - r - 4),
+        rgbm(1, 1, 1, 0.4 * alpha), 1.5)
 
-    -- ── Red GPS arrow ──────────────────────────────────────
-    -- Shaft
-    ui.drawLine(
-        vec2(cx, cy),
+    -- ── Arrow ──────────────────────────────────────────────
+    ui.drawLine(vec2(cx, cy),
         vec2(cx + dx * (r - 10), cy + dy * (r - 10)),
-        rgbm(1, 0.25, 0.25, alpha), 2.5
-    )
+        rgbm(1, 0.2, 0.2, alpha), 3)
 
-    -- Arrowhead triangle
     local tipX  = cx + dx * r
     local tipY  = cy + dy * r
     local baseX = cx + dx * (r - 14)
@@ -108,22 +92,17 @@ function script.drawUI()
         vec2(tipX, tipY),
         vec2(baseX + px * 7, baseY + py * 7),
         vec2(baseX - px * 7, baseY - py * 7),
-        rgbm(1, 0.25, 0.25, alpha)
-    )
+        rgbm(1, 0.2, 0.2, alpha))
 
-    -- ── Destination name ───────────────────────────────────
+    -- ── Labels ─────────────────────────────────────────────
+    local distStr = dist >= 1000
+        and string.format("%.1f km", dist / 1000)
+        or  string.format("%d m", math.floor(dist + 0.5))
+
     ui.setCursor(vec2(cx - 80, cy - r - 28))
     ui.pushFont(ui.Font.Small)
     ui.textAligned(currentDestName, vec2(0.5, 0.5), vec2(160, 18))
     ui.popFont()
-
-    -- ── Distance label ─────────────────────────────────────
-    local distStr
-    if dist >= 1000 then
-        distStr = string.format("%.1f km", dist / 1000)
-    else
-        distStr = string.format("%d m", math.floor(dist + 0.5))
-    end
 
     ui.setCursor(vec2(cx - 40, cy + r + 10))
     ui.pushFont(ui.Font.Small)
