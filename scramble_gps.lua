@@ -20,51 +20,52 @@ local currentDestName = ""
 local fadeAlpha       = 0.0
 local fadeTarget      = 0.0
 local debugMsg        = "waiting..."
-local lastMsgCount    = 0
+local debugRaw        = ""   -- shows raw message bytes for diagnosis
+
+-- Strip CSP/AC color and formatting tags: [color=...], [b], [i], etc.
+local function stripTags(s)
+    s = s:gsub("%[/?color[^%]]*%]", "")
+    s = s:gsub("%[/?[biusBIUS]%]", "")
+    s = s:gsub("%[/?size[^%]]*%]", "")
+    s = s:gsub("%[/?url[^%]]*%]", "")
+    return s:match("^%s*(.-)%s*$")  -- trim whitespace
+end
 
 local function trySetDest(message)
-    local dest = message:match("^Race to (.+)!$")
+    local clean = stripTags(message)
+    local dest  = clean:match("^Race to (.+)!$")
     if dest and destinations[dest] then
         currentDest     = destinations[dest]
         currentDestName = dest
         fadeTarget      = 1.0
-        debugMsg        = "DEST: " .. dest
+        debugMsg        = "GPS: " .. dest
         return true
     end
+    -- No match — record what we actually got (first 40 chars)
+    debugRaw = "raw:" .. clean:sub(1, 40)
     return false
 end
 
--- ── Hook method 1: ac.onChatMessage ───────────────────────
+-- ── Hook: ac.onChatMessage ────────────────────────────────
 if type(ac.onChatMessage) == "function" then
     ac.onChatMessage(function(carIndex, message, fromServer)
-        debugMsg = "hook1: " .. tostring(message):sub(1,30)
+        debugMsg = "hook1 msg recv"
         trySetDest(message)
     end)
-    debugMsg = "hook1 registered"
+    debugMsg = "hook1 ready"
 else
     debugMsg = "hook1 N/A"
 end
 
--- ── Hook method 2: script.onChatMessage ───────────────────
+-- ── Hook: script.onChatMessage (fallback) ─────────────────
 function script.onChatMessage(carIndex, message, fromServer)
-    debugMsg = "hook2: " .. tostring(message):sub(1,30)
+    debugMsg = "hook2 msg recv"
     trySetDest(message)
 end
 
--- ── Per-frame update + polling fallback ───────────────────
+-- ── Per-frame update ──────────────────────────────────────
 function script.update(dt)
     fadeAlpha = fadeAlpha + (fadeTarget - fadeAlpha) * math.min(dt * 4, 1)
-
-    -- Polling fallback: scan recent messages via ac.getCar messages
-    local sim = ac.getSimState and ac.getSimState()
-    if sim and sim.messageCount and sim.messageCount ~= lastMsgCount then
-        lastMsgCount = sim.messageCount
-        -- try to read last message if API exists
-        if sim.lastMessage then
-            debugMsg = "poll: " .. tostring(sim.lastMessage):sub(1,30)
-            trySetDest(sim.lastMessage)
-        end
-    end
 
     if not currentDest then return end
     local car = ac.getCar(0)
@@ -74,18 +75,23 @@ function script.update(dt)
         currentDestName = ""
         fadeTarget      = 0.0
         debugMsg        = "arrived!"
+        debugRaw        = ""
     end
 end
 
--- ── HUD ────────────────────────────────────────────────────
+-- ── HUD ───────────────────────────────────────────────────
 function script.drawUI()
     -- Debug dot (green = running)
     ui.drawCircleFilled(vec2(30, 200), 6, rgbm(0, 1, 0, 0.8), 12)
 
-    -- Debug status text
+    -- Debug status + raw message dump
     ui.setCursor(vec2(5, 210))
     ui.pushFont(ui.Font.Tiny)
     ui.text(debugMsg)
+    if debugRaw ~= "" then
+        ui.setCursor(vec2(5, 222))
+        ui.text(debugRaw)
+    end
     ui.popFont()
 
     if fadeAlpha < 0.01 then return end
