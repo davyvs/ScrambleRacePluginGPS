@@ -147,8 +147,8 @@ MAP_DATA.sdc = {
 
 -- ── [2] MAP SELECTION ────────────────────────────────────
 
-local cfg    = (type(ac.configValues) == "function" and ac.configValues()) or {}
-local mapId  = type(cfg.MAP) == "string" and cfg.MAP:lower() or "shutoko"
+local cfg   = ac.configValues({ MAP = "shutoko" })
+local mapId = (cfg.MAP or "shutoko"):lower()
 local mapCfg = MAP_DATA[mapId] or MAP_DATA.shutoko
 
 local destinations  = mapCfg.destinations
