@@ -470,7 +470,7 @@ local _icon = ui.Icons and (
     ui.Icons.Settings
 ) or nil
 if type(ui.registerOnlineExtra) == "function" then
-    ui.registerOnlineExtra(_icon, "Scramble GPS", function() return true end, function()
+    ui.registerOnlineExtra(_icon, "Scramble GPS", function()
         local v = PANEL.view
         if     v == "main"          then return showMain()
         elseif v == "type_select"   then return showTypeSelect()
