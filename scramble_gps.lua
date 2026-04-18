@@ -311,6 +311,17 @@ end
 -- ── [6] CHAT LISTENERS ───────────────────────────────────
 
 local function onMsg(message)
+    local clean = message:gsub("%b[]",""):gsub("[%z\1-\31\127]","")
+    clean = (clean:match("^%s*(.-)%s*$")) or ""
+    if clean == "!gps debug" then
+        if type(ac.sendChatMessage) == "function" then
+            ac.sendChatMessage("[GPS] registerOnlineExtra=" .. type(ui.registerOnlineExtra)
+                .. " drawUI=" .. type(script.drawUI)
+                .. " mode=" .. RACE.mode
+                .. " alpha=" .. string.format("%.2f", RACE.fadeAlpha))
+        end
+        return
+    end
     local cmd = parseCmd(message)
     if cmd then applyCmd(cmd) else tryLegacy(message) end
 end
