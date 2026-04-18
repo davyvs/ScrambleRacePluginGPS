@@ -590,10 +590,8 @@ end
 local function updateP2P(car)
     if not RACE.dest then return end
     if (car.position - RACE.dest):length() < ARRIVAL_DIST then
-        if type(ac.sendChatMessage) == "function" then
-            local prefix = RACE.mode == "convoy" and "\xF0\x9F\x9A\x97" or "\xF0\x9F\x8F\x81"
-            ac.sendChatMessage(prefix .. " " .. localName() .. " arrived at " .. RACE.destName .. "!")
-        end
+        -- Arrival announcement is sent by the server (ScrambleArrivalPlugin)
+        -- so we only clear the local UI state here.
         clearRace()
     end
 end
