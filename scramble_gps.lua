@@ -569,6 +569,12 @@ end
 -- ── [10] script.drawUI DISPATCHER ────────────────────────
 
 function script.drawUI()
+    ui.drawRectFilled(vec2(10, 10), vec2(300, 40), rgbm(1, 0, 0, 1))
+    ui.setCursor(vec2(12, 12))
+    ui.pushFont(ui.Font.Small)
+    ui.textColored("GPS debug: drawUI firing | registerOnlineExtra=" .. type(ui.registerOnlineExtra), rgbm(1,1,1,1))
+    ui.popFont()
+
     local alpha = RACE.fadeAlpha
     if alpha < 0.01 then return end
     local car = ac.getCar(0)
