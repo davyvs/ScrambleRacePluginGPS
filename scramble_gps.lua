@@ -5,6 +5,8 @@
 -- github.com/davyvs/ScrambleRacePluginGPS
 -- ============================================================
 
+ac.log("[GPS] script started, CSP build: " .. tostring(ac.getPatchVersionCode and ac.getPatchVersionCode() or "?"))
+
 -- ── [1] MAP DATA ─────────────────────────────────────────
 
 local MAP_DATA = {}
@@ -145,10 +147,13 @@ MAP_DATA.sdc = {
     lapRouteNames = { "Grazalema Loop", "Mountain Pass", "Cadiz Road Tour" },
 }
 
+ac.log("[GPS] MAP_DATA built ok")
+
 -- ── [2] MAP SELECTION ────────────────────────────────────
 
 local cfg    = (type(ac.configValues) == "function" and ac.configValues()) or {}
 local mapId  = type(cfg.MAP) == "string" and cfg.MAP:lower() or "shutoko"
+ac.log("[GPS] map selected: " .. mapId)
 local mapCfg = MAP_DATA[mapId] or MAP_DATA.shutoko
 
 local destinations  = mapCfg.destinations
@@ -463,6 +468,7 @@ end
 
 -- ── [8] registerOnlineExtra DISPATCHER ───────────────────
 
+ac.log("[GPS] reached section 8, ui.registerOnlineExtra type: " .. tostring(type(ui.registerOnlineExtra)))
 local _icon = ui.Icons and (
     ui.Icons.Navigation or ui.Icons.Explore or ui.Icons.Map or
     ui.Icons.LocationOn or ui.Icons.MyLocation or ui.Icons.NearMe or
@@ -470,6 +476,7 @@ local _icon = ui.Icons and (
     ui.Icons.Settings
 ) or nil
 if type(ui.registerOnlineExtra) == "function" then
+    ac.log("[GPS] registering panel...")
     ui.registerOnlineExtra(_icon, "Scramble GPS", function()
         local v = PANEL.view
         if     v == "main"          then return showMain()
@@ -480,6 +487,9 @@ if type(ui.registerOnlineExtra) == "function" then
         elseif v == "config_cm"     then return showConfigCM()
         else return showMain() end
     end)
+    ac.log("[GPS] panel registered")
+else
+    ac.log("[GPS] SKIP: ui.registerOnlineExtra not available")
 end
 
 -- ── [9] HUD HELPERS ──────────────────────────────────────
