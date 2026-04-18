@@ -147,7 +147,7 @@ MAP_DATA.sdc = {
 
 -- ── [2] MAP SELECTION ────────────────────────────────────
 
-local cfg    = ac.configValues and ac.configValues() or {}
+local cfg    = (type(ac.configValues) == "function" and ac.configValues()) or {}
 local mapId  = type(cfg.MAP) == "string" and cfg.MAP:lower() or "shutoko"
 local mapCfg = MAP_DATA[mapId] or MAP_DATA.shutoko
 
@@ -469,16 +469,18 @@ local _icon = ui.Icons and (
     ui.Icons.Flag or ui.Icons.SportsScore or ui.Icons.Leaderboard or
     ui.Icons.Settings
 ) or nil
-ui.registerOnlineExtra(_icon, "Scramble GPS", function() return true end, function()
-    local v = PANEL.view
-    if     v == "main"          then return showMain()
-    elseif v == "type_select"   then return showTypeSelect()
-    elseif v == "config_p2p"    then return showConfigDest("p2p",    "\xF0\x9F\x8F\x81 Point to Point",  1, .4, .4)
-    elseif v == "config_convoy" then return showConfigDest("convoy",  "\xF0\x9F\x9A\x97 Convoy / Cruise", .2, .9, .55)
-    elseif v == "config_lap"    then return showConfigLap()
-    elseif v == "config_cm"     then return showConfigCM()
-    else return showMain() end
-end)
+if type(ui.registerOnlineExtra) == "function" then
+    ui.registerOnlineExtra(_icon, "Scramble GPS", function() return true end, function()
+        local v = PANEL.view
+        if     v == "main"          then return showMain()
+        elseif v == "type_select"   then return showTypeSelect()
+        elseif v == "config_p2p"    then return showConfigDest("p2p",    "\xF0\x9F\x8F\x81 Point to Point",  1, .4, .4)
+        elseif v == "config_convoy" then return showConfigDest("convoy",  "\xF0\x9F\x9A\x97 Convoy / Cruise", .2, .9, .55)
+        elseif v == "config_lap"    then return showConfigLap()
+        elseif v == "config_cm"     then return showConfigCM()
+        else return showMain() end
+    end)
+end
 
 -- ── [9] HUD HELPERS ──────────────────────────────────────
 
