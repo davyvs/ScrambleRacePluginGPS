@@ -54,7 +54,7 @@ Open the GPS panel again and click **[ Clear GPS ]**, or arrive at the destinati
 
 - [AssettoServer](https://assettoserver.org) with [ScrambleRacePlugin](https://assettoserver.org/patreon-docs/) enabled
 - **ScrambleArrivalPlugin** (see below) — required for server-side arrival detection
-- Players must have **CSP 0.1.77+** installed via [Content Manager](https://assettocorsa.club/content-manager.html)
+- Players must have **CSP 0.3.0+** installed via [Content Manager](https://assettocorsa.club/content-manager.html)
 
 ---
 
@@ -64,7 +64,7 @@ Add the following to your server's `cfg/csp_extra_options.ini`:
 
 ```ini
 [SCRIPT_2] scramble_gps
-SCRIPT = 'https://raw.githubusercontent.com/davyvs/ScrambleRacePluginGPS/main/scramble_gps.lua'
+SCRIPT = 'https://cdn.jsdelivr.net/gh/davyvs/ScrambleRacePluginGPS@main/scramble_gps.lua'
 MAP = shutoko
 ```
 
@@ -77,7 +77,13 @@ Set `MAP` to match your track:
 
 > Replace `SCRIPT_2` with the next available script number if you already have other scripts.
 
-Players download the script automatically on join — no server restart required for script updates.
+**Pinning to a specific commit** (recommended — avoids CDN cache issues on update):
+
+```ini
+SCRIPT = 'https://cdn.jsdelivr.net/gh/davyvs/ScrambleRacePluginGPS@COMMIT_HASH/scramble_gps.lua'
+```
+
+Replace `COMMIT_HASH` with the full SHA from `git rev-parse HEAD` after each push. A server restart is required to serve the new URL to clients.
 
 ---
 
