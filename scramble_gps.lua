@@ -646,7 +646,18 @@ local function updateLap(car)
     end
 end
 
+local _debugTimer = 3.0
 function script.update(dt)
+    if _debugTimer > 0 then
+        _debugTimer = _debugTimer - dt
+        if _debugTimer <= 0 then
+            if type(ac.sendChatMessage) == "function" then
+                ac.sendChatMessage("[GPS] registerOnlineExtra=" .. type(ui.registerOnlineExtra)
+                    .. " sendChat=ok map=" .. mapId)
+            end
+        end
+    end
+
     RACE.fadeAlpha = RACE.fadeAlpha + (RACE.fadeTarget - RACE.fadeAlpha) * math.min(dt * 4, 1)
     local mode = RACE.mode
     if mode == "idle" then return end
@@ -655,5 +666,4 @@ function script.update(dt)
     if mode == "p2p" or mode == "convoy" then updateP2P(car)
     elseif mode == "lap"                 then updateLap(car)
     end
-    -- catmouse: no arrival check, ends via !scramble clear from admin
 end
