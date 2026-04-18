@@ -463,7 +463,12 @@ end
 
 -- ── [8] registerOnlineExtra DISPATCHER ───────────────────
 
-local _icon = (ui.Icons and (ui.Icons.Navigation or ui.Icons.Leaderboard)) or 0
+local _icon = ui.Icons and (
+    ui.Icons.Navigation or ui.Icons.Explore or ui.Icons.Map or
+    ui.Icons.LocationOn or ui.Icons.MyLocation or ui.Icons.NearMe or
+    ui.Icons.Flag or ui.Icons.SportsScore or ui.Icons.Leaderboard or
+    ui.Icons.Settings
+) or nil
 ui.registerOnlineExtra(_icon, "Scramble GPS", function() return true end, function()
     local v = PANEL.view
     if     v == "main"          then return showMain()
