@@ -332,6 +332,9 @@ local RACE_STATE_IDLE      = 0
 local RACE_STATE_COUNTDOWN = 1
 local RACE_STATE_RACING    = 2
 
+-- Player-to-player GPS broadcast signal (set in section [6b], used in section [7])
+local scrambleGpsSignal = nil
+
 if hasScramblePlugin then
     ac.OnlineEvent({
         ac.StructItem.key("scrambleRaceState"),
@@ -383,6 +386,63 @@ if hasScramblePlugin then
         clearRace()
         RACE.serverControlled = false
     end)
+
+    -- ── GPS broadcast signal: player-to-player ─────────────
+    -- When an admin uses the panel to start/stop GPS, this event is sent
+    -- to all other connected players so they see the same GPS immediately.
+    -- raceMode: 0=clear, 1=p2p, 2=convoy, 3=catmouse, 4=lap
+    scrambleGpsSignal = ac.OnlineEvent({
+        ac.StructItem.key("scrambleGpsSignal"),
+        destX      = ac.StructItem.float(),
+        destY      = ac.StructItem.float(),
+        destZ      = ac.StructItem.float(),
+        destRadius = ac.StructItem.float(),
+        destName   = ac.StructItem.string(64),
+        raceMode   = ac.StructItem.byte(),
+    }, function(sender, msg)
+        -- Ignore if the server is currently managing the race
+        if RACE.serverControlled then return end
+        if msg.raceMode == 0 then
+            clearRace()
+        elseif msg.raceMode == 1 or msg.raceMode == 2 then
+            -- p2p or convoy
+            clearRace()
+            RACE.serverControlled = false
+            RACE.mode       = (msg.raceMode == 2) and "convoy" or "p2p"
+            RACE.role       = "navigator"
+            RACE.destName   = msg.destName
+            RACE.dest       = vec3(msg.destX, msg.destY, msg.destZ)
+            RACE.destRadius = msg.destRadius
+            RACE.fadeTarget = 1.0
+        elseif msg.raceMode == 3 then
+            -- catmouse: destName carries the mouse player's name
+            clearRace()
+            local myName = localName()
+            RACE.serverControlled = false
+            RACE.mode      = "catmouse"
+            RACE.mouseName = msg.destName
+            RACE.mouseSlot = findSlot(msg.destName)
+            RACE.role      = (myName == msg.destName) and "mouse" or "cat"
+            RACE.fadeTarget = 1.0
+        elseif msg.raceMode == 4 then
+            -- lap: destName carries the route name
+            local route = msg.destName
+            if LAP_ROUTES[route] then
+                clearRace()
+                RACE.serverControlled = false
+                RACE.mode      = "lap"
+                RACE.role      = "navigator"
+                RACE.routeName = route
+                RACE.wpNames   = LAP_ROUTES[route]
+                RACE.waypoints = {}
+                for _, n in ipairs(RACE.wpNames) do
+                    RACE.waypoints[#RACE.waypoints + 1] = destinations[n]
+                end
+                RACE.wpIndex   = 1
+                RACE.fadeTarget = 1.0
+            end
+        end
+    end)
 end
 
 -- ── [7] PANEL HELPERS ────────────────────────────────────
@@ -392,6 +452,33 @@ local function broadcast(cmdStr, cmd)
         ac.sendChatMessage(cmdStr)
     end
     applyCmd(cmd)
+    -- Broadcast GPS state to all other connected players via CSP online event
+    if scrambleGpsSignal then
+        local t = cmd.type
+        if (t == "p2p" or t == "convoy") and cmd.params[2] then
+            local dest = destinations[cmd.params[2]]
+            if dest then
+                scrambleGpsSignal({
+                    destX      = dest.x,
+                    destY      = dest.y,
+                    destZ      = dest.z,
+                    destRadius = ARRIVAL_DIST,
+                    destName   = cmd.params[2],
+                    raceMode   = (t == "convoy") and 2 or 1,
+                })
+            end
+        elseif t == "catmouse" and cmd.params[2] then
+            -- destName carries the mouse player's name
+            scrambleGpsSignal({ destX=0, destY=0, destZ=0, destRadius=0,
+                destName=cmd.params[2], raceMode=3 })
+        elseif t == "lap" and cmd.params[2] then
+            -- destName carries the route name
+            scrambleGpsSignal({ destX=0, destY=0, destZ=0, destRadius=0,
+                destName=cmd.params[2], raceMode=4 })
+        elseif t == "clear" then
+            scrambleGpsSignal({ destX=0, destY=0, destZ=0, destRadius=0, destName="", raceMode=0 })
+        end
+    end
 end
 
 local function showMain()
@@ -686,7 +773,10 @@ local function updateP2P(car)
             -- Do not clear locally — avoid flicker if the distance check fires slightly early.
             return
         end
-        -- Legacy mode: clear locally (no server to confirm)
+        -- Legacy mode: announce arrival to all players, then clear GPS
+        if type(ac.sendChatMessage) == "function" and RACE.destName ~= "" then
+            ac.sendChatMessage("\xF0\x9F\x8F\x81 " .. localName() .. " arrived at " .. RACE.destName .. "!")
+        end
         clearRace()
     end
 end

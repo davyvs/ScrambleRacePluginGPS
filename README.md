@@ -1,139 +1,167 @@
-# Scramble GPS — CSP Online Lua Script
+# ScramblePlugin — GPS Race System for AssettoServer
 
-A client-side GPS compass for **Assetto Corsa** servers running [ScrambleRacePlugin](https://assettoserver.org). When an admin starts a scramble race, players get a compass arrow pointing to the destination and a live distance counter on the HUD.
+A unified **AssettoServer plugin** that adds GPS-guided races to Assetto Corsa multiplayer servers. When an admin starts a race, every connected player automatically receives a compass arrow pointing to the destination and a live distance counter on their HUD.
 
-Supports **Shutoko Revival Project** and **Sierra de Cadiz** maps out of the box — one script, configured per server.
+Supports **Shutoko Revival Project** and **Sierra de Cadiz** out of the box.
 
 > Built for [ChilledDVS](https://chilleddvs.com) · [Discord](https://discord.gg/A4aYXgNadF)
 
 ---
 
-## Race Types
+## Features
 
-| Mode | Command | Description |
+- **Auto-enroll** — when a race starts, every connected player joins automatically
+- **GPS HUD** — compass arrow + distance counter for each player
+- **4 race modes** — Point to Point, Convoy, Lap/Circuit, Cat & Mouse
+- **Server-side arrival detection** — winners are verified server-side, cannot be faked
+- **Finish announcements** — `🏁 PlayerName arrived at X!` broadcast to all
+- **DQ system** — disqualifies players who teleport, move at race start, or collide too many times
+- **Lua script auto-served** — the GPS script is embedded in the plugin and pushed to every connecting client automatically; no manual install needed for players
+
+---
+
+## Race Modes
+
+| Mode | How to start | Description |
 |---|---|---|
-| **Point to Point** | `!scramble p2p:Destination` | First to reach the destination wins |
-| **Convoy** | `!scramble convoy:Destination` | Everyone drives together to the destination |
-| **Lap / Circuit** | `!scramble lap:Route Name` | Multi-waypoint circuit with checkpoint announcements |
-| **Cat & Mouse** | `!scramble catmouse:PlayerName` | One player is the mouse; everyone else chases |
-| **Clear** | `!scramble clear` | Ends the current race and resets GPS for all |
+| **Point to Point** | Panel → P2P → destination | Race to a single destination; first to arrive wins |
+| **Convoy** | Panel → Convoy → destination | Group drive; everyone navigates together |
+| **Lap / Circuit** | Panel → Lap → route | Multi-waypoint circuit with checkpoint announcements |
+| **Cat & Mouse** | Panel → Cat & Mouse → player | One player is the mouse; everyone else chases |
+| **Clear GPS** | Panel → Stop / Clear GPS | Clears GPS for all connected players |
 
-Arrival is detected **server-side** by `ScrambleArrivalPlugin` and announced in chat as `🏁 PlayerName arrived at X!` from the server — players cannot fake arrivals by editing local coordinates.
+Races can also be started via the `/scramble` chat command when [StartAreas](#optional-startareas) are configured.
 
 ---
 
 ## How It Works
 
-1. Admin types `/scramble` in chat — a countdown starts and the destination is announced via `!scramble p2p:Destination` (or another race type)
-2. Players open the **GPS picker** in the CSP chat extras panel and select the destination
-3. A **compass arrow + distance counter** appear on the HUD pointing toward the destination
-4. When a player arrives within 150 m of the destination, the server announces it in chat: `🏁 PlayerName arrived at Destination!`
-5. The GPS arrow clears automatically
+1. An admin opens the **Scramble GPS** panel in-game and selects a race mode + destination
+2. **All connected players** instantly receive the GPS compass on their HUD — no action needed from them
+3. Players race to the destination; the server detects arrival and announces positions in chat
+4. The GPS clears automatically when a player arrives or is disqualified
 
 ---
 
 ## For Players
 
-### Opening the GPS Picker
+### Opening the GPS Panel
 
-1. Open the **Chat app** in-game (default: `C` or click the chat icon)
-2. Look for the **extras icons** at the bottom of the chat panel
-3. Click the **Scramble GPS** icon
-4. A panel opens — select the destination that was announced
-5. The compass arrow appears on your HUD (bottom-right corner)
+1. Open the **Chat app** in-game (default: `C`)
+2. Click the extras icons at the bottom of the chat panel
+3. Click the **Scramble GPS** icon (navigation arrow)
+4. The panel shows current race status and quick destination buttons
 
-### Clearing the GPS
+### Clearing Your GPS
 
-Open the GPS panel again and click **[ Clear GPS ]**, or arrive at the destination.
+Click **Stop / Clear GPS** in the panel, or simply arrive at the destination.
+
+> Players need **CSP 0.1.77+** (via [Content Manager](https://assettocorsa.club/content-manager.html)) for the GPS HUD to appear.
 
 ---
 
 ## For Server Admins
 
-### Requirements
+### Installation
 
-- [AssettoServer](https://assettoserver.org) with [ScrambleRacePlugin](https://assettoserver.org/patreon-docs/) enabled
-- **ScrambleArrivalPlugin** (see below) — required for server-side arrival detection
-- Players must have **CSP 0.1.77+** installed via [Content Manager](https://assettocorsa.club/content-manager.html)
+1. **Copy the plugin** to your server's plugins folder:
+   ```
+   plugins/
+   └── ScramblePlugin/
+       ├── ScramblePlugin.dll
+       ├── ScramblePlugin.deps.json
+       └── ScramblePlugin.runtimeconfig.json
+   ```
 
----
+2. **Enable the plugin** in `cfg/extra_cfg.yml`:
+   ```yaml
+   EnablePlugins:
+     - ScramblePlugin
+   ```
 
-### 1 — Install the Lua GPS Script
+3. **Enable CSP client messages** (required for the GPS HUD):
+   ```yaml
+   EnableClientMessages: true
+   ```
 
-Add the following to your server's `cfg/csp_extra_options.ini`:
-
-```ini
-[SCRIPT_2] scramble_gps
-SCRIPT = 'https://raw.githubusercontent.com/davyvs/ScrambleRacePluginGPS/main/scramble_gps.lua'
-MAP = shutoko
-```
-
-Set `MAP` to match your track:
-
-| Value | Map |
-|---|---|
-| `shutoko` | Shutoko Revival Project |
-| `sdc` | Sierra de Cadiz |
-
-> Replace `SCRIPT_2` with the next available script number if you already have other scripts.
-
-Players download the script automatically on join — no server restart required for script updates.
+That's it — the GPS Lua script is embedded in the plugin and auto-served to all connecting clients. No separate script hosting needed.
 
 ---
 
-### 2 — Install ScrambleArrivalPlugin
+### Configuration
 
-This C# AssettoServer plugin detects arrivals **server-side** so the announced winner is verified and unforgeable.
-
-**Build from source** (requires [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and the [AssettoServer](https://github.com/compujuckel/AssettoServer) source):
-
-```sh
-git clone https://github.com/compujuckel/AssettoServer
-# Copy ScrambleArrivalPlugin/ from this repo into the AssettoServer repo root
-dotnet sln AssettoServer.slnx add ScrambleArrivalPlugin/ScrambleArrivalPlugin.csproj
-dotnet publish ScrambleArrivalPlugin -c Release -r linux-x64
-# Output: out-linux-x64/plugins/ScrambleArrivalPlugin/
-```
-
-Copy the published output to your server's `plugins/ScrambleArrivalPlugin/` folder.
-
-**Enable in `cfg/extra_cfg.yml`:**
-
-```yaml
-EnablePlugins:
-  - ScrambleRacePlugin
-  - ScrambleArrivalPlugin
-```
-
-**Configure destinations** — append to `cfg/extra_cfg.yml`:
+Add a `ScramblePlugin` section to `cfg/extra_cfg.yml`:
 
 ```yaml
 ---
-!ScrambleArrivalConfiguration
-ArrivalRadiusMeters: 150
-Maps:
-  shutoko:
-    "Bayshore - Kawasaki Port": [-83.84, 7.1, 10983.11]
-    "C1 Outer - Edobashi JCT":  [2512.15, 12.23, -9223.27]
-    "Daishi PA":                [-308.59, 15.49, 6143.8]
-    "Heiwajima PA North":       [-230.06, 12.3, 1360.02]
-    "Mirai - Kinko JCT":        [-10854.32, 11.96, 13422.77]
-    "Oi PA":                    [964.93, 6.7, -126.06]
-    "Shibaura PA":              [1098.82, 25.28, -4642.14]
-    "Shinjuku Station":         [-4251.66, 32.94, -10032.48]
-    "Yokohama - Daikoku":       [-6147.93, 29.65, 13722.33]
-  sdc:
-    "Grazalema":                [-448.4, 471.6, 7710.1]
-    # ... add all SDC destinations here (see scramble_gps.lua for the full list)
-```
+!ScrambleConfiguration
 
-Destination names must exactly match the names used in `!scramble` commands and the `MAP_DATA` table in `scramble_gps.lua`.
+# Map identifier injected into the GPS Lua script
+# Options: shutoko | sdc
+MapId: shutoko
+
+# Countdown duration (seconds) after /scramble is initiated
+TimeToAcceptSeconds: 30
+
+# Number of collisions before a participant is disqualified (0 = disabled)
+CollisionDQLimit: 3
+
+# Position delta (metres) in a single frame that counts as a teleport → DQ
+TeleportThresholdMeters: 100
+
+# Maximum speed (m/s) allowed at race start; faster players are disqualified
+MaxStartSpeedMs: 2.0
+```
 
 ---
 
-### Destinations
+### Optional: Destinations
 
-#### Shutoko Revival Project
+Define named destinations with server-side coordinates for verified arrival detection and the `/scramble` command:
+
+```yaml
+Destinations:
+  - Name: "Oi PA"
+    Coordinates: [964.93, 6.70, -126.06]
+    Radius: 150
+
+  - Name: "Daishi PA"
+    Coordinates: [-308.59, 15.49, 6143.80]
+    Radius: 150
+
+  - Name: "Yokohama - Daikoku"
+    Coordinates: [-6147.93, 29.65, 13722.33]
+    Radius: 150
+```
+
+If no `Destinations` are configured the plugin falls back to the coordinates embedded in the Lua script (arrival is then detected client-side only).
+
+---
+
+### Optional: StartAreas
+
+Define polygon areas on the map from which players can start a `/scramble` race:
+
+```yaml
+StartAreas:
+  - Name: "Shibaura PA"
+    Vertices:
+      - [1050.0, 0.0, -4700.0]
+      - [1150.0, 0.0, -4700.0]
+      - [1150.0, 0.0, -4580.0]
+      - [1050.0, 0.0, -4580.0]
+```
+
+When StartAreas are configured, typing `/scramble` inside an area:
+- Immediately enrolls all connected players
+- Starts a countdown (`TimeToAcceptSeconds`)
+- Launches the race with full server-side DQ detection
+
+---
+
+## Destinations Reference
+
+### Shutoko Revival Project
 
 | Destination | Coordinates |
 |---|---|
@@ -147,16 +175,17 @@ Destination names must exactly match the names used in `!scramble` commands and 
 | Shinjuku Station | -4252, 33, -10032 |
 | Yokohama - Daikoku | -6148, 30, 13722 |
 
-#### Sierra de Cadiz
+### Sierra de Cadiz
 
-86 destinations including Grazalema, Olvera, Dam, Coffee Shop, El Gastor, Zahara de la Sierra, race track, pits, and all major road crossings. See the full list in [`scramble_gps.lua`](scramble_gps.lua).
+86 destinations including Grazalema, Olvera, Dam, Coffee Shop, El Gastor, Zahara de la Sierra, race track, pits, and all major road crossings. See the full list in [`ScramblePlugin/lua/scramble_gps.lua`](ScramblePlugin/lua/scramble_gps.lua).
 
-### Adding Custom Destinations
+---
 
-Edit `MAP_DATA` at the top of `scramble_gps.lua` and add a matching entry to `extra_cfg.yml`:
+## Adding Custom Destinations
+
+Edit `MAP_DATA` in `ScramblePlugin/lua/scramble_gps.lua`:
 
 ```lua
--- scramble_gps.lua
 MAP_DATA.shutoko = {
     destinations = {
         ["My Location"] = vec3(X, Y, Z),
@@ -165,33 +194,30 @@ MAP_DATA.shutoko = {
 }
 ```
 
+Then add a matching entry to `cfg/extra_cfg.yml` for server-side arrival detection:
+
 ```yaml
-# extra_cfg.yml
-!ScrambleArrivalConfiguration
-Maps:
-  shutoko:
-    "My Location": [X, Y, Z]
+Destinations:
+  - Name: "My Location"
+    Coordinates: [X, Y, Z]
+    Radius: 150
 ```
 
-Coordinates can be found using the CSP **Track Coordinates Helper** app in-game.
+In-game coordinates can be found using the CSP **Track Coordinates Helper** app.
 
 ---
 
-## Notes
+## Building from Source
 
-- The GPS arrow and compass run **client-side** on each player's PC
-- Arrival detection and chat announcements are **server-side** via `ScrambleArrivalPlugin` — winners cannot be faked
-- Players must rejoin after a script update to get the latest Lua version (the server plugin updates take effect on restart)
-- Lap checkpoints are still announced client-side; only the final destination arrival is verified server-side
+Requires [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) and the [AssettoServer](https://github.com/compujuckel/AssettoServer) source alongside this repo.
 
----
-
-## Credits
-
-**ScrambleRacePlugin** — the server-side plugin that powers the race system — was created by [srinoob](https://github.com/srinoob).  
-→ [github.com/srinoob/ScrambleRacePlugin](https://github.com/srinoob/ScrambleRacePlugin)
-
-This GPS script and `ScrambleArrivalPlugin` are companion tools built on top of their work.
+```sh
+git clone https://github.com/davyvs/ScrambleRacePluginGPS
+git clone https://github.com/compujuckel/AssettoServer
+cd ScrambleRacePluginGPS/ScramblePlugin
+dotnet build -c Release -r linux-x64
+# Output: bin/Release/net8.0/linux-x64/
+```
 
 ---
 
