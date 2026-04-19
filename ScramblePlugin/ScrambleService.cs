@@ -331,13 +331,28 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     private void OnChatMessage(ACTcpClient sender, ChatMessageEventArgs e)
     {
         string msg = e.ChatMessage.Message?.Trim() ?? "";
+
+        // /scramble — initiate a race from a starting area
+        if (msg.Equals("/scramble", StringComparison.OrdinalIgnoreCase))
+        {
+            HandleScrambleCommand(sender);
+            return;
+        }
+
+        // /accept — join an open race in the player's current starting area
+        if (msg.Equals("/accept", StringComparison.OrdinalIgnoreCase))
+        {
+            HandleAcceptCommand(sender);
+            return;
+        }
+
+        // Legacy !scramble commands — handled for backward compatibility
         if (!msg.StartsWith("!scramble ", StringComparison.OrdinalIgnoreCase)) return;
 
         string arg = msg["!scramble ".Length..].Trim();
 
         if (arg.Equals("clear", StringComparison.OrdinalIgnoreCase))
         {
-            // Legacy clear: send Idle to the requesting player
             sender.SendPacket(new ScrambleRaceStateEvent { RaceState = RaceState.Idle });
             return;
         }

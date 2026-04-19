@@ -11,6 +11,5 @@ public class ScrambleModule : AssettoServerModule<ScrambleConfiguration>
     {
         builder.RegisterType<ScrambleService>().AsSelf().As<IAssettoServerAutostart>().SingleInstance();
         builder.RegisterType<EntryCarRaceState>().AsSelf();
-        builder.RegisterType<ScrambleCommandModule>().AsSelf();
     }
 }
