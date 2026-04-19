@@ -1,0 +1,6 @@
+
+# Build outputs
+ScramblePlugin/bin/
+ScramblePlugin/obj/
+ScrambleArrivalPlugin/bin/
+ScrambleArrivalPlugin/obj/
