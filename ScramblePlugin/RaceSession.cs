@@ -53,17 +53,17 @@ public class RaceSession
     private readonly EntryCarManager _entryCarManager;
     private readonly Action<RaceSession> _onSessionEnd;
 
-    private long _acceptWindowEndsAt;
     private long _countdownEndsAt;
-    private bool _countdownTriggered;
 
-    /// <summary>Returns true while the accept window is open and has not yet expired.</summary>
+    /// <summary>Returns true while the countdown is running and others can still /accept.</summary>
     public bool IsAcceptWindowOpen =>
-        Phase == RacePhase.AcceptWindow
-        && Environment.TickCount64 < _acceptWindowEndsAt;
+        Phase == RacePhase.Countdown
+        && Environment.TickCount64 < _countdownEndsAt;
 
     /// <summary>
     /// Initialises a new race session initiated by <paramref name="initiator"/>.
+    /// The countdown starts immediately — the initiator sees the GPS right away,
+    /// and other players have <see cref="ScrambleConfiguration.TimeToAcceptSeconds"/> to /accept.
     /// </summary>
     public RaceSession(
         string startAreaName,
@@ -78,96 +78,61 @@ public class RaceSession
         _config = config;
         _entryCarManager = entryCarManager;
         _onSessionEnd = onSessionEnd;
-        _acceptWindowEndsAt = Environment.TickCount64 + config.TimeToAcceptSeconds * 1000L;
 
         Participants[initiator.SessionId] = initiator;
+
+        // Start countdown immediately — initiator sees GPS straight away
+        Phase = RacePhase.Countdown;
+        _countdownEndsAt = Environment.TickCount64 + config.TimeToAcceptSeconds * 1000L;
+
+        long raceStartsAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                             + config.TimeToAcceptSeconds * 1000L;
+        initiator.SendPacket(new ScrambleRaceStateEvent
+        {
+            RaceState = RaceState.Countdown,
+            DestName = destination.Name,
+            DestX = destination.Coordinates[0],
+            DestY = destination.Coordinates[1],
+            DestZ = destination.Coordinates[2],
+            DestRadius = destination.Radius,
+            RaceStartsAt = raceStartsAt
+        });
     }
 
     /// <summary>
-    /// Called when a player types /accept. Adds them to the participant list and
-    /// triggers the countdown on the first acceptance.
+    /// Called when a player types /accept. Joins them into the running countdown.
     /// </summary>
     public void AddParticipant(ACTcpClient client)
     {
-        if (Phase != RacePhase.AcceptWindow) return;
+        if (Phase != RacePhase.Countdown) return;
 
         Participants[client.SessionId] = client;
         Log.Information("ScramblePlugin: {Player} joined race from {Area} to {Dest}",
             client.Name, StartAreaName, Destination.Name);
 
-        if (!_countdownTriggered)
+        // Send current countdown state to the late joiner
+        long remaining = Math.Max(0, _countdownEndsAt - Environment.TickCount64);
+        long raceStartsAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + remaining;
+        client.SendPacket(new ScrambleRaceStateEvent
         {
-            _countdownTriggered = true;
-            _countdownEndsAt = Environment.TickCount64 + _config.TimeToAcceptSeconds * 1000L;
-            Phase = RacePhase.Countdown;
-
-            // Notify all current participants of the countdown
-            long raceStartsAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                                 + _config.TimeToAcceptSeconds * 1000L;
-            SendToAllParticipants(new ScrambleRaceStateEvent
-            {
-                RaceState = RaceState.Countdown,
-                DestName = Destination.Name,
-                DestX = Destination.Coordinates[0],
-                DestY = Destination.Coordinates[1],
-                DestZ = Destination.Coordinates[2],
-                DestRadius = Destination.Radius,
-                RaceStartsAt = raceStartsAt
-            });
-        }
-        else
-        {
-            // Late joiner during countdown — send them the current state
-            long remaining = Math.Max(0, _countdownEndsAt - Environment.TickCount64);
-            long raceStartsAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + remaining;
-            client.SendPacket(new ScrambleRaceStateEvent
-            {
-                RaceState = RaceState.Countdown,
-                DestName = Destination.Name,
-                DestX = Destination.Coordinates[0],
-                DestY = Destination.Coordinates[1],
-                DestZ = Destination.Coordinates[2],
-                DestRadius = Destination.Radius,
-                RaceStartsAt = raceStartsAt
-            });
-        }
+            RaceState = RaceState.Countdown,
+            DestName = Destination.Name,
+            DestX = Destination.Coordinates[0],
+            DestY = Destination.Coordinates[1],
+            DestZ = Destination.Coordinates[2],
+            DestRadius = Destination.Radius,
+            RaceStartsAt = raceStartsAt
+        });
     }
 
     /// <summary>
     /// Called from the service tick loop (~250 ms interval).
-    /// Advances the session through AcceptWindow → Countdown → Racing state machine.
+    /// Advances the session through Countdown → Racing state machine.
     /// </summary>
     public void Tick(EntryCarRaceState[] carStates)
     {
-        switch (Phase)
-        {
-            case RacePhase.AcceptWindow:
-                TickAcceptWindow();
-                break;
-            case RacePhase.Countdown:
-                TickCountdown(carStates);
-                break;
-        }
-    }
-
-    private void TickAcceptWindow()
-    {
-        if (Environment.TickCount64 < _acceptWindowEndsAt) return;
-
-        // No one accepted — cancel the session
-        var initiator = Participants.Values.FirstOrDefault();
-        if (initiator != null)
-        {
-            initiator.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "No one joined your race. Session cancelled."
-            });
-        }
-
-        Log.Information("ScramblePlugin: Race from {Area} to {Dest} cancelled — no participants",
-            StartAreaName, Destination.Name);
-        EndSession();
+        if (Phase == RacePhase.Countdown)
+            TickCountdown(carStates);
     }
 
     private void TickCountdown(EntryCarRaceState[] carStates)
