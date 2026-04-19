@@ -9,7 +9,7 @@ public class ScrambleConfiguration : IValidateConfiguration<ScrambleConfiguratio
 {
     // ── Race timing ───────────────────────────────────────────────────────────
 
-    /// <summary>Seconds other players have to type /accept after /scramble is initiated.</summary>
+    /// <summary>Countdown duration in seconds after /scramble is initiated before the race starts.</summary>
     public int TimeToAcceptSeconds { get; init; } = 30;
 
     /// <summary>Number of environment collisions before a participant is disqualified. 0 = disabled.</summary>

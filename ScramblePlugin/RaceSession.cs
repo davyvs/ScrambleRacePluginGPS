@@ -11,10 +11,7 @@ namespace ScramblePlugin;
 /// <summary>Represents the lifecycle phase of a race session.</summary>
 public enum RacePhase
 {
-    /// <summary>Waiting for at least one player to /accept.</summary>
-    AcceptWindow,
-
-    /// <summary>At least one player has accepted; countdown running before race starts.</summary>
+    /// <summary>Countdown running before race starts; all players auto-enrolled.</summary>
     Countdown,
 
     /// <summary>Race is live — tracking positions and collisions.</summary>
@@ -38,7 +35,7 @@ public class RaceSession
     public DestinationConfig Destination { get; }
 
     /// <summary>Current race lifecycle phase.</summary>
-    public RacePhase Phase { get; private set; } = RacePhase.AcceptWindow;
+    public RacePhase Phase { get; private set; } = RacePhase.Countdown;
 
     /// <summary>All participants, keyed by SessionId. Includes the initiator.</summary>
     public Dictionary<byte, ACTcpClient> Participants { get; } = new();
@@ -55,15 +52,9 @@ public class RaceSession
 
     private long _countdownEndsAt;
 
-    /// <summary>Returns true while the countdown is running and others can still /accept.</summary>
-    public bool IsAcceptWindowOpen =>
-        Phase == RacePhase.Countdown
-        && Environment.TickCount64 < _countdownEndsAt;
-
     /// <summary>
     /// Initialises a new race session initiated by <paramref name="initiator"/>.
-    /// The countdown starts immediately — the initiator sees the GPS right away,
-    /// and other players have <see cref="ScrambleConfiguration.TimeToAcceptSeconds"/> to /accept.
+    /// All connected players are auto-enrolled; the countdown starts immediately.
     /// </summary>
     public RaceSession(
         string startAreaName,
@@ -100,7 +91,7 @@ public class RaceSession
     }
 
     /// <summary>
-    /// Called when a player types /accept. Joins them into the running countdown.
+    /// Joins a player into the running countdown (called during auto-enroll).
     /// </summary>
     public void AddParticipant(ACTcpClient client)
     {
