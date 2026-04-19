@@ -91,7 +91,17 @@ Replace `COMMIT_HASH` with the full SHA from `git rev-parse HEAD` after each pus
 
 This C# AssettoServer plugin detects arrivals **server-side** so the announced winner is verified and unforgeable.
 
-**Build from source** (requires [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and the [AssettoServer](https://github.com/compujuckel/AssettoServer) source):
+**Download the latest release (recommended):**
+
+👉 [ScrambleArrivalPlugin — latest release](https://github.com/davyvs/ScrambleRacePluginGPS/releases/latest)
+
+Download the zip for your AssettoServer version, extract it, and copy the folder to your server's `plugins/ScrambleArrivalPlugin/` folder.
+
+| Release | AssettoServer | Runtime |
+|---|---|---|
+| `ScrambleArrivalPlugin-v1.0.0-assettoserver-0.54.zip` | 0.0.54 | .NET 8 |
+
+**Build from source** (AssettoServer 0.0.55+ or custom builds — requires [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and the [AssettoServer](https://github.com/compujuckel/AssettoServer) source):
 
 ```sh
 git clone https://github.com/compujuckel/AssettoServer
