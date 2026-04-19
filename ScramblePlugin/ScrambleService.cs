@@ -270,60 +270,27 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         _activeSessions[area.Name] = session;
         state.ActiveSession = session;
 
+        // Auto-enroll every connected player
+        foreach (var car in _entryCarManager.EntryCars)
+        {
+            if (car.Client is not { } other) continue;
+            if (other.SessionId == client.SessionId) continue; // initiator already in session
+            var otherState = _carStates[other.SessionId];
+            if (otherState?.ActiveSession != null) continue;   // already in another race
+            session.AddParticipant(other);
+            if (otherState != null) otherState.ActiveSession = session;
+        }
+
         string playerName = client.Name ?? $"Car {client.SessionId}";
         _entryCarManager.BroadcastPacket(new ChatMessage
         {
             SessionId = 255,
-            Message = $"\xF0\x9F\x8F\x81 {playerName} is starting a race from {area.Name}! " +
-                      $"Go there and type /accept to join. ({_config.TimeToAcceptSeconds}s)"
+            Message = $"\xF0\x9F\x8F\x81 {playerName} started a race from {area.Name} to {destination.Name}! " +
+                      $"Race starts in {_config.TimeToAcceptSeconds}s \u2014 get ready!"
         });
 
-        Log.Information("ScramblePlugin: Race initiated by {Player} from {Area} to {Dest}",
-            playerName, area.Name, destination.Name);
-    }
-
-    /// <summary>
-    /// Handles a player typing /accept. Validates they are in the same starting area
-    /// as an open race, then adds them as a participant.
-    /// </summary>
-    public void HandleAcceptCommand(ACTcpClient client)
-    {
-        var state = _carStates[client.SessionId];
-        if (state == null) return;
-
-        var area = PolygonContainment.FindContainingArea(_startAreas, state.LastKnownPosition);
-        if (area == null || !_activeSessions.TryGetValue(area.Name, out var session))
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "No race to join from your current position."
-            });
-            return;
-        }
-
-        if (!session.IsAcceptWindowOpen)
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "The join window for this race has closed."
-            });
-            return;
-        }
-
-        if (session.Participants.ContainsKey(client.SessionId))
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "You have already joined this race."
-            });
-            return;
-        }
-
-        session.AddParticipant(client);
-        state.ActiveSession = session;
+        Log.Information("ScramblePlugin: Race initiated by {Player} from {Area} to {Dest} — auto-enrolled {Count} players",
+            playerName, area.Name, destination.Name, session.Participants.Count);
     }
 
     // ── Legacy !scramble chat command handling ────────────────────────────────
@@ -336,13 +303,6 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         if (msg.Equals("/scramble", StringComparison.OrdinalIgnoreCase))
         {
             HandleScrambleCommand(sender);
-            return;
-        }
-
-        // /accept — join an open race in the player's current starting area
-        if (msg.Equals("/accept", StringComparison.OrdinalIgnoreCase))
-        {
-            HandleAcceptCommand(sender);
             return;
         }
 
