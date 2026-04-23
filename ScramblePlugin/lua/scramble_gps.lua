@@ -559,8 +559,19 @@ local function showConfigDest(typeKey, title, cr, cg, cb)
     ui.separator()
     if PANEL.selDest ~= "" then
         if ui.button("  Start " .. title .. "  \xe2\x96\xba", vec2(-1, 0)) then
-            broadcast("!scramble " .. typeKey .. ":" .. enc(PANEL.selDest),
-                      { type = typeKey, params = { typeKey, PANEL.selDest } })
+            if typeKey == "p2p" then
+                -- Full server-managed race: server sends countdown + auto-enrolls everyone
+                if type(ac.sendChatMessage) == "function" then
+                    ac.sendChatMessage("/scramble race:" .. enc(PANEL.selDest))
+                end
+                -- Show GPS locally immediately while waiting for server countdown packet
+                applyCmd({ type = "p2p", params = { "p2p", PANEL.selDest } })
+                -- Note: do NOT call scrambleGpsSignal here — server sends
+                --       ScrambleRaceStateEvent(Countdown) to all participants
+            else
+                broadcast("!scramble " .. typeKey .. ":" .. enc(PANEL.selDest),
+                          { type = typeKey, params = { typeKey, PANEL.selDest } })
+            end
             PANEL.view = "main"; close = true
         end
     end

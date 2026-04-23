@@ -293,16 +293,102 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
             playerName, area.Name, destination.Name, session.Participants.Count);
     }
 
+    /// <summary>
+    /// Handles a panel-initiated (or chat-typed) race to a named destination.
+    /// Unlike <see cref="HandleScrambleCommand"/>, no starting area is required —
+    /// the race starts from wherever the initiator currently is.
+    /// </summary>
+    private void HandlePanelRace(ACTcpClient client, string destName)
+    {
+        var state = _carStates[client.SessionId];
+        if (state == null) return;
+
+        if (!_destinations.TryGetValue(destName, out var dest))
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = $"Unknown destination: \"{destName}\". Check spelling or use the panel."
+            });
+            return;
+        }
+
+        // One panel race per initiator at a time
+        string sessionKey = $"@panel_{client.SessionId}";
+        if (_activeSessions.ContainsKey(sessionKey) || state.ActiveSession != null)
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = "You are already in a race."
+            });
+            return;
+        }
+
+        string playerName = client.Name ?? $"Car {client.SessionId}";
+
+        var session = new RaceSession(
+            playerName,
+            dest,
+            client,
+            _config,
+            _entryCarManager,
+            _ => _activeSessions.TryRemove(sessionKey, out _));
+
+        _activeSessions[sessionKey] = session;
+        state.ActiveSession = session;
+
+        // Auto-enroll all connected players
+        foreach (var car in _entryCarManager.EntryCars)
+        {
+            if (car.Client is not { } other) continue;
+            if (other.SessionId == client.SessionId) continue;
+            var otherState = _carStates[other.SessionId];
+            if (otherState?.ActiveSession != null) continue;
+            session.AddParticipant(other);
+            if (otherState != null) otherState.ActiveSession = session;
+        }
+
+        _entryCarManager.BroadcastPacket(new ChatMessage
+        {
+            SessionId = 255,
+            Message = $"\xF0\x9F\x8F\x81 {playerName} started a race to {dest.Name}! " +
+                      $"Race starts in {_config.TimeToAcceptSeconds}s \u2014 get ready!"
+        });
+
+        Log.Information("ScramblePlugin: Panel race started by {Player} to {Dest} — {Count} participants",
+            playerName, dest.Name, session.Participants.Count);
+    }
+
     // ── Legacy !scramble chat command handling ────────────────────────────────
 
     private void OnChatMessage(ACTcpClient sender, ChatMessageEventArgs e)
     {
         string msg = e.ChatMessage.Message?.Trim() ?? "";
 
-        // /scramble — initiate a race from a starting area
-        if (msg.Equals("/scramble", StringComparison.OrdinalIgnoreCase))
+        // /scramble [race:Dest | DestName | (empty)] — unified entry point
+        if (msg.StartsWith("/scramble", StringComparison.OrdinalIgnoreCase))
         {
-            HandleScrambleCommand(sender);
+            string rest = msg.Length > "/scramble".Length
+                ? msg["/scramble".Length..].TrimStart()
+                : "";
+
+            if (rest.StartsWith("race:", StringComparison.OrdinalIgnoreCase))
+            {
+                // Panel-initiated full race: /scramble race:DestName
+                string destArg = rest[5..].Trim().Replace('_', ' ');
+                HandlePanelRace(sender, destArg);
+            }
+            else if (rest.Length > 0)
+            {
+                // Chat-typed destination: /scramble Daishi PA
+                HandlePanelRace(sender, rest);
+            }
+            else
+            {
+                // StartArea mode: /scramble (requires polygon area config)
+                HandleScrambleCommand(sender);
+            }
             return;
         }
 
