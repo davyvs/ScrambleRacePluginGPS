@@ -538,27 +538,6 @@ local function showMain()
         end
     end
 
-    -- GPS compass position controls
-    ui.separator()
-    ui.pushFont(ui.Font.Tiny)
-    ui.textColored("GPS compass position", rgbm(.6,.6,.6,1))
-    ui.popFont()
-    local step = 20
-    if not GPS_POS then
-        local sx = ac.storage.scrambleGpsX
-        local sy = ac.storage.scrambleGpsY
-        GPS_POS = (type(sx) == "number" and sx > 0) and vec2(sx, sy) or vec2(1835, 950)
-    end
-    if ui.button("\xe2\x86\x90", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x - step, GPS_POS.y); _gpsSave() end
-    ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x91", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y - step); _gpsSave() end
-    ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x93", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y + step); _gpsSave() end
-    ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x92", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x + step, GPS_POS.y); _gpsSave() end
-    ui.sameLine(0, 2)
-    if ui.button("Reset", vec2(-1, 0)) then GPS_POS = vec2(1835, 950); _gpsSave() end
-
     ui.separator()
     if ui.button("  Close", vec2(-1, 0)) then close = true end
     return close
@@ -710,11 +689,10 @@ local function screenSize()
     return (u and u.windowSize.x or 1920), (u and u.windowSize.y or 1080)
 end
 
--- ── GPS compass position (panel-adjustable, persisted) ──────
+-- ── GPS compass position ─────────────────────────────────────
 
-local GPS_R          = 40   -- compass circle radius
-local GPS_POS        = nil  -- vec2; nil until first update tick
-local _gpsPreviewEnd = 0    -- os.clock() time until preview flash expires
+local GPS_R   = 40   -- compass circle radius
+local GPS_POS = nil  -- vec2; nil until first update tick
 
 local function _gpsDefault()
     local sx, sy = screenSize()
@@ -730,12 +708,6 @@ local function _gpsInit()
     else
         GPS_POS = _gpsDefault()
     end
-end
-
-local function _gpsSave()
-    ac.storage.scrambleGpsX = GPS_POS.x
-    ac.storage.scrambleGpsY = GPS_POS.y
-    _gpsPreviewEnd = os.clock() + 2  -- flash the compass for 2 s so the user sees it move
 end
 
 local function drawArrow(car, target, cr, cg, cb, alpha)
@@ -800,18 +772,6 @@ function script.drawUI()
     if not car then return end
 
     local alpha = RACE.fadeAlpha
-
-    -- Brief preview flash when panel nudge buttons are pressed (no race active)
-    if GPS_POS and os.clock() < _gpsPreviewEnd and RACE.mode == "idle" then
-        local cx, cy, r = GPS_POS.x, GPS_POS.y, GPS_R
-        ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.5), 40)
-        ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 0.8, 0, 0.9), 40, 2)
-        ui.drawLine(vec2(cx - r, cy), vec2(cx + r, cy), rgbm(1, 0.8, 0, 0.9), 1)
-        ui.drawLine(vec2(cx, cy - r), vec2(cx, cy + r), rgbm(1, 0.8, 0, 0.9), 1)
-        drawLabels(cx, cy, r, "GPS", "preview", 1)
-        return
-    end
-
     if alpha < 0.01 then return end
 
     -- During accept window / countdown: show timer at compass position instead of GPS arrow
