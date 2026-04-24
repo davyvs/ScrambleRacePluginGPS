@@ -691,12 +691,12 @@ end
 
 -- ── GPS compass position (draggable, persisted) ───────────
 
-local GPS_R        = 40          -- compass circle radius
-local GPS_POS      = nil         -- vec2; nil until first update tick
-local _gDrag       = false       -- currently being dragged?
-local _gHover      = false       -- mouse is near compass
-local _gDragOff    = vec2(0, 0)
-local _gPrevBtn    = false       -- previous frame's isMouseButtonDown state
+local GPS_R      = 40          -- compass circle radius
+local GPS_POS    = nil         -- vec2; nil until first update tick
+local _gDrag     = false       -- currently being dragged?
+local _gHover    = false       -- mouse is near compass
+local _gDragOff  = vec2(0, 0)
+local _gLastMpos = vec2(0, 0)  -- mouse pos cached every update() tick
 
 local function _gpsDefault()
     local sx, sy = screenSize()
@@ -714,40 +714,42 @@ local function _gpsInit()
     end
 end
 
--- ALL mouse logic lives here in update() — zero mouse calls in drawUI().
--- Calling any mouse function inside drawUI causes CSP to hide the overlay.
--- ac.isMouseButtonPressed() is unreliable in update(), so we detect the
--- press edge manually via _gPrevBtn / isMouseButtonDown().
-local function _gpsDragUpdate()
-    if not GPS_POS then return end
+-- Only caches mouse position — no button logic here.
+-- Raw mouse button calls don't work in update(); drag is handled
+-- via ui.invisibleButton + ui.isItemActive() in drawUI() instead.
+local function _gpsCacheMouse()
     local mpos = ui.mousePos()
-    if not mpos then return end
+    if mpos then _gLastMpos = mpos end
+end
 
-    local btnDown      = ac.isMouseButtonDown(0)
-    local btnJustDown  = btnDown and not _gPrevBtn
-    _gPrevBtn          = btnDown
+-- Called from drawUI() AFTER drawing the compass.
+-- ui.invisibleButton registers an ImGui hit-test area; isItemActive() fires
+-- while the button is held without polling raw mouse state, so it does NOT
+-- trigger the CSP overlay-hiding bug that raw mouse calls cause.
+local function _gpsDragWidget()
+    if not GPS_POS then return end
+    local sz = (GPS_R + 12) * 2
+    ui.setCursor(vec2(GPS_POS.x - GPS_R - 12, GPS_POS.y - GPS_R - 12))
+    ui.invisibleButton("##gpsdrag", vec2(sz, sz))
 
-    local hover = (mpos - GPS_POS):length() <= GPS_R + 10
-    _gHover = hover or _gDrag
+    _gHover = ui.isItemHovered()
 
-    if hover and btnJustDown then
-        _gDrag    = true
-        _gDragOff = GPS_POS - mpos
-    end
-
-    if _gDrag then
-        if btnDown then
-            local sx, sy = screenSize()
-            GPS_POS = vec2(
-                math.max(GPS_R + 10, math.min(sx - GPS_R - 10, mpos.x + _gDragOff.x)),
-                math.max(GPS_R + 10, math.min(sy - GPS_R - 10, mpos.y + _gDragOff.y))
-            )
-        else
-            _gDrag  = false
-            _gHover = false
-            ac.storage.scrambleGpsX = GPS_POS.x
-            ac.storage.scrambleGpsY = GPS_POS.y
+    if ui.isItemActive() then
+        if not _gDrag then
+            _gDrag    = true
+            _gDragOff = GPS_POS - _gLastMpos
         end
+        local sx, sy = screenSize()
+        GPS_POS = vec2(
+            math.max(GPS_R + 10, math.min(sx - GPS_R - 10, _gLastMpos.x + _gDragOff.x)),
+            math.max(GPS_R + 10, math.min(sy - GPS_R - 10, _gLastMpos.y + _gDragOff.y))
+        )
+    elseif _gDrag then
+        -- Button was released
+        _gDrag  = false
+        _gHover = false
+        ac.storage.scrambleGpsX = GPS_POS.x
+        ac.storage.scrambleGpsY = GPS_POS.y
     end
 end
 
@@ -813,14 +815,6 @@ function script.drawUI()
     local car   = ac.getCar(0)
     if not car then return end
 
-    -- Hover/drag ring — state is computed entirely in script.update().
-    -- No mouse calls here: ANY mouse function in drawUI hides the overlay.
-    if alpha > 0.05 and GPS_POS and _gHover then
-        local ring_a = _gDrag and 0.8 or (0.45 * alpha)
-        local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
-        ui.drawCircle(vec2(GPS_POS.x, GPS_POS.y), GPS_R + 9, ring_c, 40, 1.5)
-    end
-
     if alpha < 0.01 then return end
 
     -- During accept window / countdown: show timer at compass position instead of GPS arrow
@@ -877,6 +871,18 @@ function script.drawUI()
             end
         end
     end
+
+    -- Invisible ImGui hit-test button for drag — drawn after compass so it sits
+    -- on top for interaction. Uses isItemActive() which doesn't poll raw mouse
+    -- state and therefore doesn't trigger the CSP overlay-hiding bug.
+    _gpsDragWidget()
+
+    -- Hover/drag ring (drawn on top of compass, underneath UI labels)
+    if _gHover and GPS_POS then
+        local ring_a = _gDrag and 0.8 or (0.45 * alpha)
+        local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
+        ui.drawCircle(vec2(GPS_POS.x, GPS_POS.y), GPS_R + 9, ring_c, 40, 1.5)
+    end
 end
 
 -- ── [11] UPDATE HELPERS & script.update ──────────────────
@@ -924,9 +930,9 @@ end
 function script.update(dt)
     RACE.fadeAlpha = RACE.fadeAlpha + (RACE.fadeTarget - RACE.fadeAlpha) * math.min(dt * 4, 1)
 
-    -- GPS drag handling lives here — NOT in drawUI — to avoid the widget vanishing on hover.
+    -- Cache mouse position each tick so drawUI can use it without calling ui.mousePos() there.
     _gpsInit()
-    _gpsDragUpdate()
+    _gpsCacheMouse()
 
     local mode = RACE.mode
     if mode == "idle" then return end
