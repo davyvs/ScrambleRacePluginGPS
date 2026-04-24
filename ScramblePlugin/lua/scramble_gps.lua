@@ -494,45 +494,48 @@ end
 
 local function showMain()
     local close = false
-    ui.pushFont(ui.Font.Small)
     local mode = RACE.mode
+
+    -- Status line
+    ui.pushFont(ui.Font.Small)
     if     mode == "idle"     then ui.textColored("No race active",                              rgbm(.6,.6,.6,1))
-    elseif mode == "p2p"      then ui.textColored("\xF0\x9F\x8F\x81 P2P: " .. RACE.destName,    rgbm(1,.4,.4,1))
-    elseif mode == "convoy"   then ui.textColored("\xF0\x9F\x9A\x97 Convoy: " .. RACE.destName,  rgbm(.2,.9,.55,1))
-    elseif mode == "lap"      then ui.textColored("\xF0\x9F\x94\xB5 Lap " .. RACE.routeName ..
+    elseif mode == "p2p"      then ui.textColored("\xF0\x9F\x8F\x81 Racing to: " .. RACE.destName,  rgbm(1,.4,.4,1))
+    elseif mode == "convoy"   then ui.textColored("\xF0\x9F\x9A\x97 Convoy: " .. RACE.destName,     rgbm(.2,.9,.55,1))
+    elseif mode == "lap"      then ui.textColored("\xF0\x9F\x94\xB5 Lap: " .. RACE.routeName ..
                                                   " (" .. RACE.wpIndex .. "/" .. #RACE.waypoints .. ")", rgbm(.4,.6,1,1))
     elseif mode == "catmouse" then
         if RACE.role == "mouse" then ui.textColored("\xF0\x9F\x90\xAD You are the MOUSE!", rgbm(1,.3,.3,1))
         else ui.textColored("\xF0\x9F\x90\xB1 Chasing: " .. RACE.mouseName, rgbm(1,.6,.1,1)) end
     end
     ui.popFont()
+
+    -- Lap next-waypoint hint
+    if mode == "lap" then
+        ui.pushFont(ui.Font.Tiny)
+        ui.text("Next: " .. (RACE.wpNames[RACE.wpIndex] or "?"))
+        ui.popFont()
+    end
+
     ui.separator()
+
+    -- Idle hint
+    if mode == "idle" then
+        ui.pushFont(ui.Font.Tiny)
+        ui.text("Drive to a \xF0\x9F\x85\xBF PA and use")
+        ui.text("Start Race \xe2\x96\xba Point to Point")
+        ui.text("or type /scramble in chat.")
+        ui.popFont()
+        ui.dummy(vec2(0, 2))
+    end
 
     if ui.button("  \xe2\x96\xba Start Race...", vec2(-1, 0)) then
         PANEL.view = "type_select"; PANEL.selDest = ""; PANEL.selRoute = ""; PANEL.selMouseName = ""
     end
-    if RACE.mode ~= "idle" then
+    if mode ~= "idle" then
         if ui.button("  \xe2\x96\xa0 Stop / Clear GPS", vec2(-1, 0)) then
             broadcast("!scramble clear", { type="clear", params={"clear"} })
             close = true
         end
-    end
-
-    if RACE.mode == "p2p" or RACE.mode == "convoy" or RACE.mode == "idle" then
-        ui.separator()
-        ui.pushFont(ui.Font.Tiny); ui.text("Quick destination:"); ui.popFont()
-        for _, name in ipairs(destNames) do
-            local active = (name == RACE.destName and RACE.mode ~= "idle")
-            if ui.button((active and "* " or "  ") .. name, vec2(-1, 0)) then
-                broadcast("!scramble p2p:" .. enc(name), { type="p2p", params={"p2p", name} })
-                close = true
-            end
-        end
-    elseif RACE.mode == "lap" then
-        ui.separator()
-        ui.pushFont(ui.Font.Tiny)
-        ui.text("Next: " .. (RACE.wpNames[RACE.wpIndex] or "?"))
-        ui.popFont()
     end
 
     ui.separator()
