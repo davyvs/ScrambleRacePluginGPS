@@ -689,9 +689,60 @@ local function screenSize()
     return (u and u.windowSize.x or 1920), (u and u.windowSize.y or 1080)
 end
 
-local function drawArrow(car, target, cr, cg, cb, alpha)
+-- ── GPS compass position (draggable, persisted) ───────────
+
+local GPS_R      = 40       -- compass circle radius
+local GPS_POS    = nil      -- vec2; nil until first draw
+local _gDrag     = false    -- currently being dragged?
+local _gDragOff  = vec2(0, 0)
+
+local function _gpsDefault()
     local sx, sy = screenSize()
-    local cx, cy, r = sx - 85, sy - 130, 40
+    return vec2(sx - 85, sy - 130)
+end
+
+local function _gpsInit()
+    if GPS_POS then return end
+    local x = ac.storage.scrambleGpsX
+    local y = ac.storage.scrambleGpsY
+    if type(x) == "number" and x > 0 then
+        GPS_POS = vec2(x, y)
+    else
+        GPS_POS = _gpsDefault()
+    end
+end
+
+-- Call once per frame in script.drawUI() before drawing.
+-- Returns true while the compass is being hovered or dragged.
+local function _gpsDragTick()
+    local mpos  = ui.mousePos()
+    local hover = (mpos - GPS_POS):length() <= GPS_R + 10
+
+    if hover and ac.isMouseButtonPressed(0) then
+        _gDrag    = true
+        _gDragOff = GPS_POS - mpos
+    end
+
+    if _gDrag then
+        if ac.isMouseButtonDown(0) then
+            local sx, sy = screenSize()
+            GPS_POS = vec2(
+                math.max(GPS_R + 10, math.min(sx - GPS_R - 10, mpos.x + _gDragOff.x)),
+                math.max(GPS_R + 10, math.min(sy - GPS_R - 10, mpos.y + _gDragOff.y))
+            )
+        else
+            -- Released — save position
+            _gDrag = false
+            ac.storage.scrambleGpsX = GPS_POS.x
+            ac.storage.scrambleGpsY = GPS_POS.y
+        end
+    end
+
+    return hover or _gDrag
+end
+
+local function drawArrow(car, target, cr, cg, cb, alpha)
+    local cx, cy, r = GPS_POS.x, GPS_POS.y, GPS_R
 
     local toT   = target - car.position
     local bear  = math.atan2(toT.x, toT.z)
@@ -748,17 +799,31 @@ end
 -- ── [10] script.drawUI DISPATCHER ────────────────────────
 
 function script.drawUI()
+    -- Initialise saved position on first frame
+    _gpsInit()
+
     local alpha = RACE.fadeAlpha
-    if alpha < 0.01 then return end
-    local car = ac.getCar(0)
+    local car   = ac.getCar(0)
     if not car then return end
+
+    -- Drag handling + hover ring (runs even when HUD is hidden so the
+    -- widget can always be repositioned while a race is visible)
+    if alpha > 0.05 then
+        local active = _gpsDragTick()
+        if active then
+            local ring_a = _gDrag and 0.8 or (0.45 * alpha)
+            local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
+            ui.drawCircle(vec2(GPS_POS.x, GPS_POS.y), GPS_R + 9, ring_c, 40, 1.5)
+        end
+    end
+
+    if alpha < 0.01 then return end
 
     -- During accept window / countdown: show timer at compass position instead of GPS arrow
     if RACE.serverControlled and RACE.raceStartsAt > 0 then
         local remain = math.max(0, (RACE.raceStartsAt - os.clock() * 1000) / 1000)
         if remain > 0 then
-            local sx, sy = screenSize()
-            local cx, cy, r = sx - 85, sy - 130, 40
+            local cx, cy, r = GPS_POS.x, GPS_POS.y, GPS_R
             local secs = math.ceil(remain)
             ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.65 * alpha), 40)
             ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 0.8, 0, 0.9 * alpha), 40, 2)
