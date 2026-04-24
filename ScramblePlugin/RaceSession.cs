@@ -136,12 +136,10 @@ public class RaceSession
     {
         if (Environment.TickCount64 < _acceptWindowEndsAt) return;
 
-        // Need at least 1 player other than the initiator
-        int otherCount = Participants.Count - 1;
-
-        if (otherCount < 1)
+        // Need at least MinParticipants players (including initiator)
+        if (Participants.Count < _config.MinParticipants)
         {
-            // Nobody joined — cancel the race
+            // Not enough players — cancel the race
             Phase = RacePhase.Finished;
 
             if (Participants.TryGetValue(_initiatorSessionId, out var initiator))
@@ -153,7 +151,7 @@ public class RaceSession
             _entryCarManager.BroadcastPacket(new ChatMessage
             {
                 SessionId = 255,
-                Message = $"\u274C Race from {StartAreaName} to {Destination.Name} cancelled \u2014 no one joined."
+                Message = $"\u274C Race from {StartAreaName} to {Destination.Name} cancelled \u2014 not enough players joined."
             });
 
             Log.Information("ScramblePlugin: Race from {Area} to {Dest} cancelled — no participants joined",

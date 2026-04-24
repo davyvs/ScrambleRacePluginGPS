@@ -12,6 +12,12 @@ public class ScrambleConfiguration : IValidateConfiguration<ScrambleConfiguratio
     /// <summary>Countdown duration in seconds after /scramble is initiated before the race starts.</summary>
     public int TimeToAcceptSeconds { get; init; } = 30;
 
+    /// <summary>
+    /// Minimum number of participants (including the initiator) required to start a race.
+    /// Set to 1 to allow solo racing (useful for testing). Default is 1.
+    /// </summary>
+    public int MinParticipants { get; init; } = 1;
+
     /// <summary>Number of environment collisions before a participant is disqualified. 0 = disabled.</summary>
     public int CollisionDQLimit { get; init; } = 3;
 
