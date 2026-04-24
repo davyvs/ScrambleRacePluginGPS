@@ -692,8 +692,9 @@ end
 -- ── GPS compass position (draggable, persisted) ───────────
 
 local GPS_R      = 40       -- compass circle radius
-local GPS_POS    = nil      -- vec2; nil until first draw
+local GPS_POS    = nil      -- vec2; nil until first update tick
 local _gDrag     = false    -- currently being dragged?
+local _gHover    = false    -- mouse is near compass?
 local _gDragOff  = vec2(0, 0)
 
 local function _gpsDefault()
@@ -712,11 +713,14 @@ local function _gpsInit()
     end
 end
 
--- Call once per frame in script.drawUI() before drawing.
--- Returns true while the compass is being hovered or dragged.
-local function _gpsDragTick()
-    local mpos  = ui.mousePos()
+-- Called from script.update() — never from drawUI, to avoid rendering glitches.
+local function _gpsDragUpdate()
+    if not GPS_POS then return end
+    local mpos = ui.mousePos()
+    if not mpos then return end
+
     local hover = (mpos - GPS_POS):length() <= GPS_R + 10
+    _gHover = hover or _gDrag
 
     if hover and ac.isMouseButtonPressed(0) then
         _gDrag    = true
@@ -733,12 +737,11 @@ local function _gpsDragTick()
         else
             -- Released — save position
             _gDrag = false
+            _gHover = false
             ac.storage.scrambleGpsX = GPS_POS.x
             ac.storage.scrambleGpsY = GPS_POS.y
         end
     end
-
-    return hover or _gDrag
 end
 
 local function drawArrow(car, target, cr, cg, cb, alpha)
@@ -799,22 +802,16 @@ end
 -- ── [10] script.drawUI DISPATCHER ────────────────────────
 
 function script.drawUI()
-    -- Initialise saved position on first frame
-    _gpsInit()
-
     local alpha = RACE.fadeAlpha
     local car   = ac.getCar(0)
     if not car then return end
 
-    -- Drag handling + hover ring (runs even when HUD is hidden so the
-    -- widget can always be repositioned while a race is visible)
-    if alpha > 0.05 then
-        local active = _gpsDragTick()
-        if active then
-            local ring_a = _gDrag and 0.8 or (0.45 * alpha)
-            local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
-            ui.drawCircle(vec2(GPS_POS.x, GPS_POS.y), GPS_R + 9, ring_c, 40, 1.5)
-        end
+    -- Hover/drag ring — drawn from cached state set in script.update(),
+    -- never from mouse queries here (doing so causes the widget to vanish on hover).
+    if alpha > 0.05 and GPS_POS and _gHover then
+        local ring_a = _gDrag and 0.8 or (0.45 * alpha)
+        local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
+        ui.drawCircle(vec2(GPS_POS.x, GPS_POS.y), GPS_R + 9, ring_c, 40, 1.5)
     end
 
     if alpha < 0.01 then return end
@@ -919,6 +916,11 @@ end
 
 function script.update(dt)
     RACE.fadeAlpha = RACE.fadeAlpha + (RACE.fadeTarget - RACE.fadeAlpha) * math.min(dt * 4, 1)
+
+    -- GPS drag handling lives here — NOT in drawUI — to avoid the widget vanishing on hover.
+    _gpsInit()
+    _gpsDragUpdate()
+
     local mode = RACE.mode
     if mode == "idle" then return end
     local car = ac.getCar(0)
