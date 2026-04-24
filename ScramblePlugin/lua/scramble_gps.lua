@@ -544,21 +544,20 @@ local function showMain()
     ui.textColored("GPS compass position", rgbm(.6,.6,.6,1))
     ui.popFont()
     local step = 20
-    _gpsInit()  -- ensure GPS_POS is set before button logic runs
-    local px = GPS_POS and GPS_POS.x or _gpsDefault().x
-    local py = GPS_POS and GPS_POS.y or _gpsDefault().y
-    ui.pushFont(ui.Font.Tiny)
-    ui.textColored(string.format("x: %.0f  y: %.0f", px, py), rgbm(.5,.5,.5,1))
-    ui.popFont()
-    if ui.button("\xe2\x86\x90", vec2(36, 0)) then GPS_POS = vec2(px - step, py); _gpsSave() end
+    if not GPS_POS then
+        local sx = ac.storage.scrambleGpsX
+        local sy = ac.storage.scrambleGpsY
+        GPS_POS = (type(sx) == "number" and sx > 0) and vec2(sx, sy) or vec2(1835, 950)
+    end
+    if ui.button("\xe2\x86\x90", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x - step, GPS_POS.y); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x91", vec2(36, 0)) then GPS_POS = vec2(px, py - step); _gpsSave() end
+    if ui.button("\xe2\x86\x91", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y - step); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x93", vec2(36, 0)) then GPS_POS = vec2(px, py + step); _gpsSave() end
+    if ui.button("\xe2\x86\x93", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y + step); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x92", vec2(36, 0)) then GPS_POS = vec2(px + step, py); _gpsSave() end
+    if ui.button("\xe2\x86\x92", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x + step, GPS_POS.y); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("Reset", vec2(-1, 0)) then GPS_POS = _gpsDefault(); _gpsSave() end
+    if ui.button("Reset", vec2(-1, 0)) then GPS_POS = vec2(1835, 950); _gpsSave() end
 
     ui.separator()
     if ui.button("  Close", vec2(-1, 0)) then close = true end
@@ -800,23 +799,20 @@ function script.drawUI()
     local car = ac.getCar(0)
     if not car then return end
 
-    -- Use race alpha normally; boost to 0.7 briefly when panel nudge buttons are pressed
-    -- so the player sees the compass move even with no active race.
-    local preview = GPS_POS and os.clock() < _gpsPreviewEnd
-    local alpha   = preview and 0.7 or RACE.fadeAlpha
+    local alpha = RACE.fadeAlpha
 
-    if alpha < 0.01 then return end
-
-    -- Preview mode: draw a plain circle with crosshair so player can see where it is
-    if preview and RACE.mode == "idle" then
+    -- Brief preview flash when panel nudge buttons are pressed (no race active)
+    if GPS_POS and os.clock() < _gpsPreviewEnd and RACE.mode == "idle" then
         local cx, cy, r = GPS_POS.x, GPS_POS.y, GPS_R
-        ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.5 * alpha), 40)
-        ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 0.8, 0, 0.9 * alpha), 40, 2)
-        ui.drawLine(vec2(cx - r, cy), vec2(cx + r, cy), rgbm(1, 0.8, 0, alpha), 1)
-        ui.drawLine(vec2(cx, cy - r), vec2(cx, cy + r), rgbm(1, 0.8, 0, alpha), 1)
-        drawLabels(cx, cy, r, "GPS", "preview", alpha)
+        ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.5), 40)
+        ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 0.8, 0, 0.9), 40, 2)
+        ui.drawLine(vec2(cx - r, cy), vec2(cx + r, cy), rgbm(1, 0.8, 0, 0.9), 1)
+        ui.drawLine(vec2(cx, cy - r), vec2(cx, cy + r), rgbm(1, 0.8, 0, 0.9), 1)
+        drawLabels(cx, cy, r, "GPS", "preview", 1)
         return
     end
+
+    if alpha < 0.01 then return end
 
     -- During accept window / countdown: show timer at compass position instead of GPS arrow
     if RACE.serverControlled and RACE.raceStartsAt > 0 then
