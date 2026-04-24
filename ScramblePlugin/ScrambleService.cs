@@ -296,7 +296,7 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         {
             SessionId = 255,
             Message = $"\xF0\x9F\x8F\x81 {playerName} is starting a race from {area.Name} to {destination.Name}! " +
-                      $"Go to {area.Name} and type /accept to join! ({_config.TimeToAcceptSeconds}s)"
+                      $"Go to {area.Name} and type /join to join! ({_config.TimeToAcceptSeconds}s)"
         });
 
         Log.Information("ScramblePlugin: Race initiated by {Player} from {Area} to {Dest}",
@@ -327,7 +327,7 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
             client.SendPacket(new ChatMessage
             {
                 SessionId = 255,
-                Message = "You must be in a starting area to /accept. Drive to the starting area first!"
+                Message = "You must be in a starting area to /join. Drive to the starting area first!"
             });
             return;
         }

@@ -37,9 +37,9 @@ public class ScrambleCommandModule : ACModuleBase
         _service.HandleScrambleCommand(Client!);
     }
 
-    [Command("accept")]
-    [Description("Join a pending race at your current starting area.")]
-    public void Accept()
+    [Command("join")]
+    [Description("Join a pending scramble race at your current starting area.")]
+    public void Join()
     {
         _service.HandleAcceptCommand(Client!);
     }
