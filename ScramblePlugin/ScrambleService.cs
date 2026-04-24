@@ -190,19 +190,8 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     {
         string msg = e.ChatMessage.Message?.Trim() ?? "";
 
-        // /scramble — initiate a race from a starting area
-        if (msg.Equals("/scramble", StringComparison.OrdinalIgnoreCase))
-        {
-            HandleScrambleCommand(sender);
-            return;
-        }
-
-        // /accept — join a pending race at your current starting area
-        if (msg.Equals("/accept", StringComparison.OrdinalIgnoreCase))
-        {
-            HandleAcceptCommand(sender);
-            return;
-        }
+        // /scramble and /accept are handled by ScrambleCommandModule (proper slash command registration).
+        // We still handle the legacy !scramble prefix here for GPS-only convoy/lap/catmouse/clear modes.
 
         // Legacy GPS-only commands (panel convoy / lap / catmouse / clear)
         if (!msg.StartsWith("!scramble ", StringComparison.OrdinalIgnoreCase)) return;
@@ -239,8 +228,9 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     /// <summary>
     /// Handles /scramble: validates the player is in a starting area, picks a random
     /// destination, and opens an accept window for other players to /accept.
+    /// Called by ScrambleCommandModule so the slash command is properly registered.
     /// </summary>
-    private void HandleScrambleCommand(ACTcpClient client)
+    internal void HandleScrambleCommand(ACTcpClient client)
     {
         var state = _carStates[client.SessionId];
         if (state == null) return;
@@ -317,8 +307,9 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
 
     /// <summary>
     /// Handles /accept: joins the player to a pending race at their current starting area.
+    /// Called by ScrambleCommandModule so the slash command is properly registered.
     /// </summary>
-    private void HandleAcceptCommand(ACTcpClient client)
+    internal void HandleAcceptCommand(ACTcpClient client)
     {
         var state = _carStates[client.SessionId];
         if (state == null) return;

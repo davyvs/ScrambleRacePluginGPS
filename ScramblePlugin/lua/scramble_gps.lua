@@ -37,6 +37,14 @@ MAP_DATA.shutoko = {
         },
     },
     lapRouteNames = { "Bayshore Sprint", "Inner City Loop", "Full Shutoko" },
+    startAreas = {
+        "Shibaura PA",
+        "Daishi PA",
+        "Heiwajima PA North",
+        "Oi PA",
+        "Bayshore - Kawasaki Port",
+        "Yokohama - Daikoku",
+    },
 }
 
 MAP_DATA.sdc = {
@@ -143,6 +151,7 @@ MAP_DATA.sdc = {
         },
     },
     lapRouteNames = { "Grazalema Loop", "Mountain Pass", "Cadiz Road Tour" },
+    startAreas = {},  -- no race areas configured for SDC yet
 }
 
 -- ── [2] MAP SELECTION ────────────────────────────────────
@@ -159,6 +168,8 @@ local lapRouteNames = mapCfg.lapRouteNames
 local destNames = {}
 for name in pairs(destinations) do destNames[#destNames + 1] = name end
 table.sort(destNames)
+
+local startAreaNames = mapCfg.startAreas or {}
 
 local ARRIVAL_DIST = 150
 
@@ -534,12 +545,7 @@ local function showTypeSelect()
     ui.pushFont(ui.Font.Small); ui.text("Select Race Type:"); ui.popFont()
     ui.separator()
     if ui.button("  \xF0\x9F\x8F\x81  Point to Point",  vec2(-1, 0)) then
-        -- Send /scramble — server picks a random destination; player must be in a starting area
-        if type(ac.sendChatMessage) == "function" then
-            ac.sendChatMessage("/scramble")
-        end
-        PANEL.view = "main"
-        return true
+        PANEL.view = "start_race"
     end
     if ui.button("  \xF0\x9F\x9A\x97  Convoy / Cruise", vec2(-1, 0)) then PANEL.view = "config_convoy"  end
     if ui.button("  \xF0\x9F\x94\xB5  Lap / Circuit",   vec2(-1, 0)) then PANEL.view = "config_lap"     end
@@ -621,6 +627,44 @@ local function showConfigCM()
     return close
 end
 
+local function showStartRace()
+    local close = false
+    ui.pushFont(ui.Font.Small)
+    ui.textColored("\xF0\x9F\x8F\x81 Point to Point Race", rgbm(1, 0.4, 0.4, 1))
+    ui.popFont()
+    ui.separator()
+
+    if #startAreaNames > 0 then
+        ui.pushFont(ui.Font.Tiny)
+        ui.text("Drive to one of these parking areas,")
+        ui.text("then click Start when you're parked.")
+        ui.popFont()
+        ui.dummy(vec2(0, 4))
+        for _, name in ipairs(startAreaNames) do
+            ui.pushFont(ui.Font.Small)
+            ui.textColored("\xF0\x9F\x85\xBF  " .. name, rgbm(0.95, 0.85, 0.3, 1))
+            ui.popFont()
+        end
+        ui.separator()
+        if ui.button("  \xe2\x9c\x85  I'm parked \xe2\x80\x94 Start Race!", vec2(-1, 0)) then
+            if type(ac.sendChatMessage) == "function" then
+                ac.sendChatMessage("/scramble")
+            end
+            PANEL.view = "main"
+            return true
+        end
+    else
+        ui.pushFont(ui.Font.Tiny)
+        ui.text("No starting areas are configured for this map.")
+        ui.popFont()
+    end
+
+    ui.separator()
+    if ui.button("  Back",  vec2(-1, 0)) then PANEL.view = "type_select" end
+    if ui.button("  Close", vec2(-1, 0)) then close = true end
+    return close
+end
+
 -- ── [8] registerOnlineExtra DISPATCHER ───────────────────
 
 local _icon = (ui.Icons and (ui.Icons.Navigation or ui.Icons.Leaderboard)) or 0
@@ -628,6 +672,7 @@ ui.registerOnlineExtra(_icon, "Scramble GPS", function() return true end, functi
     local v = PANEL.view
     if     v == "main"          then return showMain()
     elseif v == "type_select"   then return showTypeSelect()
+    elseif v == "start_race"    then return showStartRace()
     elseif v == "config_convoy" then return showConfigDest("convoy", "\xF0\x9F\x9A\x97 Convoy / Cruise", .2, .9, .55)
     elseif v == "config_lap"    then return showConfigLap()
     elseif v == "config_cm"     then return showConfigCM()
