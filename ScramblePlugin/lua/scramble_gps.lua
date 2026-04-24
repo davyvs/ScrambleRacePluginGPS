@@ -705,10 +705,11 @@ local function screenSize()
     return (u and u.windowSize.x or 1920), (u and u.windowSize.y or 1080)
 end
 
--- ── GPS compass position (draggable, persisted) ───────────
+-- ── GPS compass position (panel-adjustable, persisted) ──────
 
-local GPS_R   = 40   -- compass circle radius
-local GPS_POS = nil  -- vec2; nil until first update tick
+local GPS_R          = 40   -- compass circle radius
+local GPS_POS        = nil  -- vec2; nil until first update tick
+local _gpsPreviewEnd = 0    -- os.clock() time until preview flash expires
 
 local function _gpsDefault()
     local sx, sy = screenSize()
@@ -729,6 +730,7 @@ end
 local function _gpsSave()
     ac.storage.scrambleGpsX = GPS_POS.x
     ac.storage.scrambleGpsY = GPS_POS.y
+    _gpsPreviewEnd = os.clock() + 2  -- flash the compass for 2 s so the user sees it move
 end
 
 local function drawArrow(car, target, cr, cg, cb, alpha)
@@ -789,11 +791,26 @@ end
 -- ── [10] script.drawUI DISPATCHER ────────────────────────
 
 function script.drawUI()
-    local alpha = RACE.fadeAlpha
-    local car   = ac.getCar(0)
+    local car = ac.getCar(0)
     if not car then return end
 
+    -- Use race alpha normally; boost to 0.7 briefly when panel nudge buttons are pressed
+    -- so the player sees the compass move even with no active race.
+    local preview = GPS_POS and os.clock() < _gpsPreviewEnd
+    local alpha   = preview and 0.7 or RACE.fadeAlpha
+
     if alpha < 0.01 then return end
+
+    -- Preview mode: draw a plain circle with crosshair so player can see where it is
+    if preview and RACE.mode == "idle" then
+        local cx, cy, r = GPS_POS.x, GPS_POS.y, GPS_R
+        ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.5 * alpha), 40)
+        ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 0.8, 0, 0.9 * alpha), 40, 2)
+        ui.drawLine(vec2(cx - r, cy), vec2(cx + r, cy), rgbm(1, 0.8, 0, alpha), 1)
+        ui.drawLine(vec2(cx, cy - r), vec2(cx, cy + r), rgbm(1, 0.8, 0, alpha), 1)
+        drawLabels(cx, cy, r, "GPS", "preview", alpha)
+        return
+    end
 
     -- During accept window / countdown: show timer at compass position instead of GPS arrow
     if RACE.serverControlled and RACE.raceStartsAt > 0 then
