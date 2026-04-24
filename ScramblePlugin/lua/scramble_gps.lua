@@ -544,13 +544,19 @@ local function showMain()
     ui.textColored("GPS compass position", rgbm(.6,.6,.6,1))
     ui.popFont()
     local step = 20
-    if ui.button("\xe2\x86\x90", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x - step, GPS_POS.y); _gpsSave() end
+    _gpsInit()  -- ensure GPS_POS is set before button logic runs
+    local px = GPS_POS and GPS_POS.x or _gpsDefault().x
+    local py = GPS_POS and GPS_POS.y or _gpsDefault().y
+    ui.pushFont(ui.Font.Tiny)
+    ui.textColored(string.format("x: %.0f  y: %.0f", px, py), rgbm(.5,.5,.5,1))
+    ui.popFont()
+    if ui.button("\xe2\x86\x90", vec2(36, 0)) then GPS_POS = vec2(px - step, py); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x91", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y - step); _gpsSave() end
+    if ui.button("\xe2\x86\x91", vec2(36, 0)) then GPS_POS = vec2(px, py - step); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x93", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y + step); _gpsSave() end
+    if ui.button("\xe2\x86\x93", vec2(36, 0)) then GPS_POS = vec2(px, py + step); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x92", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x + step, GPS_POS.y); _gpsSave() end
+    if ui.button("\xe2\x86\x92", vec2(36, 0)) then GPS_POS = vec2(px + step, py); _gpsSave() end
     ui.sameLine(0, 2)
     if ui.button("Reset", vec2(-1, 0)) then GPS_POS = _gpsDefault(); _gpsSave() end
 
