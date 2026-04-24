@@ -691,11 +691,12 @@ end
 
 -- ── GPS compass position (draggable, persisted) ───────────
 
-local GPS_R      = 40       -- compass circle radius
-local GPS_POS    = nil      -- vec2; nil until first update tick
-local _gDrag     = false    -- currently being dragged?
-local _gHover    = false    -- mouse is near compass?
-local _gDragOff  = vec2(0, 0)
+local GPS_R        = 40          -- compass circle radius
+local GPS_POS      = nil         -- vec2; nil until first update tick
+local _gDrag       = false       -- currently being dragged?
+local _gHover      = false       -- mouse is near compass (set in update)
+local _gDragOff    = vec2(0, 0)
+local _gLastMpos   = vec2(0, 0)  -- mouse pos cached in update, used in drawUI
 
 local function _gpsDefault()
     local sx, sy = screenSize()
@@ -713,16 +714,24 @@ local function _gpsInit()
     end
 end
 
--- Called from script.update() — never from drawUI, to avoid rendering glitches.
+-- Called from script.update(): caches mouse position and hover state.
+-- ui.mousePos() must NOT be called inside drawUI or the widget vanishes on hover.
 local function _gpsDragUpdate()
     if not GPS_POS then return end
     local mpos = ui.mousePos()
     if not mpos then return end
-
+    _gLastMpos = mpos
     local hover = (mpos - GPS_POS):length() <= GPS_R + 10
     _gHover = hover or _gDrag
+end
 
-    if hover and ac.isMouseButtonPressed(0) then
+-- Called from drawUI(): handles click/drag using the cached mouse pos.
+-- ac.isMouseButtonPressed/Down only fire reliably in the draw callback.
+local function _gpsDragDraw()
+    if not GPS_POS then return end
+    local mpos = _gLastMpos
+
+    if _gHover and ac.isMouseButtonPressed(0) then
         _gDrag    = true
         _gDragOff = GPS_POS - mpos
     end
@@ -734,9 +743,10 @@ local function _gpsDragUpdate()
                 math.max(GPS_R + 10, math.min(sx - GPS_R - 10, mpos.x + _gDragOff.x)),
                 math.max(GPS_R + 10, math.min(sy - GPS_R - 10, mpos.y + _gDragOff.y))
             )
+            _gHover = true
         else
             -- Released — save position
-            _gDrag = false
+            _gDrag  = false
             _gHover = false
             ac.storage.scrambleGpsX = GPS_POS.x
             ac.storage.scrambleGpsY = GPS_POS.y
@@ -806,8 +816,11 @@ function script.drawUI()
     local car   = ac.getCar(0)
     if not car then return end
 
-    -- Hover/drag ring — drawn from cached state set in script.update(),
-    -- never from mouse queries here (doing so causes the widget to vanish on hover).
+    -- Button detection lives here (isMouseButtonPressed only fires in drawUI).
+    -- Position math uses _gLastMpos cached in update — no ui.mousePos() call here.
+    if alpha > 0.05 then _gpsDragDraw() end
+
+    -- Hover/drag ring drawn from state computed above + in update().
     if alpha > 0.05 and GPS_POS and _gHover then
         local ring_a = _gDrag and 0.8 or (0.45 * alpha)
         local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
