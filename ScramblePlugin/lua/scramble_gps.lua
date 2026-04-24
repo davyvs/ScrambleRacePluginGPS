@@ -538,6 +538,23 @@ local function showMain()
         end
     end
 
+    -- GPS compass position controls
+    ui.separator()
+    ui.pushFont(ui.Font.Tiny)
+    ui.textColored("GPS compass position", rgbm(.6,.6,.6,1))
+    ui.popFont()
+    local step = 20
+    local btnW = (ui.getContentWidth() - 6) / 5   -- 5 buttons, 4 x 2px gaps
+    if ui.button("\xe2\x86\x90",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x - step, GPS_POS.y); _gpsSave() end
+    ui.sameLine(0, 2)
+    if ui.button("\xe2\x86\x91",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y - step); _gpsSave() end
+    ui.sameLine(0, 2)
+    if ui.button("\xe2\x86\x93",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y + step); _gpsSave() end
+    ui.sameLine(0, 2)
+    if ui.button("\xe2\x86\x92",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x + step, GPS_POS.y); _gpsSave() end
+    ui.sameLine(0, 2)
+    if ui.button("Reset", vec2(btnW, 0)) then GPS_POS = _gpsDefault(); _gpsSave() end
+
     ui.separator()
     if ui.button("  Close", vec2(-1, 0)) then close = true end
     return close
@@ -691,12 +708,8 @@ end
 
 -- ── GPS compass position (draggable, persisted) ───────────
 
-local GPS_R      = 40          -- compass circle radius
-local GPS_POS    = nil         -- vec2; nil until first update tick
-local _gDrag     = false       -- currently being dragged?
-local _gHover    = false       -- mouse is near compass
-local _gDragOff  = vec2(0, 0)
-local _gLastMpos = vec2(0, 0)  -- mouse pos cached every update() tick
+local GPS_R   = 40   -- compass circle radius
+local GPS_POS = nil  -- vec2; nil until first update tick
 
 local function _gpsDefault()
     local sx, sy = screenSize()
@@ -714,43 +727,9 @@ local function _gpsInit()
     end
 end
 
--- Only caches mouse position — no button logic here.
--- Raw mouse button calls don't work in update(); drag is handled
--- via ui.invisibleButton + ui.isItemActive() in drawUI() instead.
-local function _gpsCacheMouse()
-    local mpos = ui.mousePos()
-    if mpos then _gLastMpos = mpos end
-end
-
--- Called from drawUI() AFTER drawing the compass.
--- ui.invisibleButton registers an ImGui hit-test area; isItemActive() fires
--- while the button is held without polling raw mouse state, so it does NOT
--- trigger the CSP overlay-hiding bug that raw mouse calls cause.
-local function _gpsDragWidget()
-    if not GPS_POS then return end
-    local sz = (GPS_R + 12) * 2
-    ui.setCursor(vec2(GPS_POS.x - GPS_R - 12, GPS_POS.y - GPS_R - 12))
-    ui.invisibleButton("##gpsdrag", vec2(sz, sz))
-
-    _gHover = ui.isItemHovered()
-
-    if ui.isItemActive() then
-        if not _gDrag then
-            _gDrag    = true
-            _gDragOff = GPS_POS - _gLastMpos
-        end
-        local sx, sy = screenSize()
-        GPS_POS = vec2(
-            math.max(GPS_R + 10, math.min(sx - GPS_R - 10, _gLastMpos.x + _gDragOff.x)),
-            math.max(GPS_R + 10, math.min(sy - GPS_R - 10, _gLastMpos.y + _gDragOff.y))
-        )
-    elseif _gDrag then
-        -- Button was released
-        _gDrag  = false
-        _gHover = false
-        ac.storage.scrambleGpsX = GPS_POS.x
-        ac.storage.scrambleGpsY = GPS_POS.y
-    end
+local function _gpsSave()
+    ac.storage.scrambleGpsX = GPS_POS.x
+    ac.storage.scrambleGpsY = GPS_POS.y
 end
 
 local function drawArrow(car, target, cr, cg, cb, alpha)
@@ -872,17 +851,6 @@ function script.drawUI()
         end
     end
 
-    -- Invisible ImGui hit-test button for drag — drawn after compass so it sits
-    -- on top for interaction. Uses isItemActive() which doesn't poll raw mouse
-    -- state and therefore doesn't trigger the CSP overlay-hiding bug.
-    _gpsDragWidget()
-
-    -- Hover/drag ring (drawn on top of compass, underneath UI labels)
-    if _gHover and GPS_POS then
-        local ring_a = _gDrag and 0.8 or (0.45 * alpha)
-        local ring_c = _gDrag and rgbm(1, 0.8, 0, ring_a) or rgbm(1, 1, 1, ring_a)
-        ui.drawCircle(vec2(GPS_POS.x, GPS_POS.y), GPS_R + 9, ring_c, 40, 1.5)
-    end
 end
 
 -- ── [11] UPDATE HELPERS & script.update ──────────────────
@@ -930,9 +898,7 @@ end
 function script.update(dt)
     RACE.fadeAlpha = RACE.fadeAlpha + (RACE.fadeTarget - RACE.fadeAlpha) * math.min(dt * 4, 1)
 
-    -- Cache mouse position each tick so drawUI can use it without calling ui.mousePos() there.
     _gpsInit()
-    _gpsCacheMouse()
 
     local mode = RACE.mode
     if mode == "idle" then return end
