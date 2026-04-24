@@ -378,22 +378,31 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     private static List<DestinationConfig> PromoteLegacyMaps(ScrambleConfiguration config)
     {
         var promoted = new List<DestinationConfig>();
-        foreach (var map in config.Maps.Values)
+
+        // Only promote destinations for the current map (MapId).
+        // If MapId isn't found, fall back to all maps so nothing silently breaks.
+        if (!config.Maps.TryGetValue(config.MapId, out var mapEntries))
         {
-            foreach (var (name, coords) in map)
+            Log.Warning("ScramblePlugin: MapId '{MapId}' not found in Maps config — falling back to all map entries", config.MapId);
+            foreach (var map in config.Maps.Values)
+                foreach (var (name, coords) in map)
+                {
+                    if (coords.Length < 3) continue;
+                    promoted.Add(new DestinationConfig { Name = name, Radius = config.ArrivalRadiusMeters, Coordinates = coords });
+                }
+        }
+        else
+        {
+            foreach (var (name, coords) in mapEntries)
             {
                 if (coords.Length < 3) continue;
-                promoted.Add(new DestinationConfig
-                {
-                    Name       = name,
-                    Radius     = config.ArrivalRadiusMeters,
-                    Coordinates = coords
-                });
+                promoted.Add(new DestinationConfig { Name = name, Radius = config.ArrivalRadiusMeters, Coordinates = coords });
             }
         }
 
         if (promoted.Count > 0)
-            Log.Information("ScramblePlugin: Auto-promoted {Count} legacy destinations from Maps config", promoted.Count);
+            Log.Information("ScramblePlugin: Auto-promoted {Count} legacy destinations from Maps[{MapId}]",
+                promoted.Count, config.MapId);
 
         return promoted;
     }
