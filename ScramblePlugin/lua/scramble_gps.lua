@@ -544,16 +544,15 @@ local function showMain()
     ui.textColored("GPS compass position", rgbm(.6,.6,.6,1))
     ui.popFont()
     local step = 20
-    local btnW = (ui.getContentWidth() - 6) / 5   -- 5 buttons, 4 x 2px gaps
-    if ui.button("\xe2\x86\x90",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x - step, GPS_POS.y); _gpsSave() end
+    if ui.button("\xe2\x86\x90", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x - step, GPS_POS.y); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x91",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y - step); _gpsSave() end
+    if ui.button("\xe2\x86\x91", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y - step); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x93",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y + step); _gpsSave() end
+    if ui.button("\xe2\x86\x93", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x, GPS_POS.y + step); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("\xe2\x86\x92",  vec2(btnW, 0)) then GPS_POS = vec2(GPS_POS.x + step, GPS_POS.y); _gpsSave() end
+    if ui.button("\xe2\x86\x92", vec2(36, 0)) then GPS_POS = vec2(GPS_POS.x + step, GPS_POS.y); _gpsSave() end
     ui.sameLine(0, 2)
-    if ui.button("Reset", vec2(btnW, 0)) then GPS_POS = _gpsDefault(); _gpsSave() end
+    if ui.button("Reset", vec2(-1, 0)) then GPS_POS = _gpsDefault(); _gpsSave() end
 
     ui.separator()
     if ui.button("  Close", vec2(-1, 0)) then close = true end
