@@ -30,14 +30,17 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     // Per-car state indexed by SessionId
     private readonly EntryCarRaceState[] _carStates = new EntryCarRaceState[256];
 
-    // Active race sessions keyed by StartArea.Name
+    // Active race sessions keyed by StartArea.Name (one race per area, one active total)
     private readonly ConcurrentDictionary<string, RaceSession> _activeSessions = new();
 
     // Pre-built destination lookup (case-insensitive, includes legacy promotions)
     private readonly Dictionary<string, DestinationConfig> _destinations;
 
-    // Starting area list (including AlsoDestination areas)
+    // Starting area list
     private readonly List<StartAreaConfig> _startAreas;
+
+    // Random source for destination selection
+    private readonly Random _rng = new();
 
     public ScrambleService(
         EntryCarManager entryCarManager,
@@ -48,7 +51,7 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         IHostApplicationLifetime applicationLifetime) : base(applicationLifetime)
     {
         _entryCarManager = entryCarManager;
-        _config = config;
+        _config          = config;
         _serverConfiguration = serverConfiguration;
         _carStateFactory = carStateFactory;
 
@@ -85,32 +88,24 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
             }
         }
 
-        int destCount = _destinations.Count;
-        int areaCount = _startAreas.Count;
         Log.Information("ScramblePlugin: Loaded {Destinations} destination(s) and {Areas} starting area(s)",
-            destCount, areaCount);
+            _destinations.Count, _startAreas.Count);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Create per-car state and subscribe events for all existing slots
         foreach (var car in _entryCarManager.EntryCars)
-        {
             InitCar(car);
-        }
 
-        // Subscribe to future connections
         _entryCarManager.ClientConnected += OnClientConnected;
 
         Log.Information("ScramblePlugin: Running");
 
-        // Main tick loop — advances race session state machines
         while (!stoppingToken.IsCancellationRequested)
         {
             foreach (var session in _activeSessions.Values)
-            {
                 session.Tick(_carStates);
-            }
+
             await Task.Delay(250, stoppingToken);
         }
     }
@@ -125,13 +120,10 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
 
     private void OnClientConnected(ACTcpClient client, EventArgs _)
     {
-        // Re-init the car state for this slot (may have been used by a previous player)
         _carStates[client.SessionId] = _carStateFactory(client.EntryCar);
         client.EntryCar.PositionUpdateReceived += OnPositionUpdate;
-        client.Collision += OnCollision;
+        client.Collision    += OnCollision;
         client.Disconnecting += OnClientDisconnecting;
-
-        // Hook legacy !scramble chat commands
         client.ChatMessageReceived += OnChatMessage;
     }
 
@@ -139,9 +131,7 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     {
         var state = _carStates[client.SessionId];
         if (state?.ActiveSession is { } session)
-        {
             session.DisqualifyParticipant(client.SessionId, DqReason.Disconnected, _carStates);
-        }
     }
 
     // ── Position update ───────────────────────────────────────────────────────
@@ -169,15 +159,12 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         state.HasPosition = true;
 
         // Arrival detection — only while actively racing
-        if (state.IsRacing && state.ActiveSession is { } session)
+        if (state.IsRacing && state.ActiveSession is { } activeSession)
         {
-            var dest = session.Destination;
+            var dest    = activeSession.Destination;
             var destPos = new Vector3(dest.Coordinates[0], dest.Coordinates[1], dest.Coordinates[2]);
-            float distance = Vector3.Distance(newPos, destPos);
-            if (distance <= dest.Radius)
-            {
-                session.RecordArrival(car.SessionId, _carStates);
-            }
+            if (Vector3.Distance(newPos, destPos) <= dest.Radius)
+                activeSession.RecordArrival(car.SessionId, _carStates);
         }
     }
 
@@ -194,205 +181,30 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         Log.Debug("ScramblePlugin: Collision #{Count} for {Player}", state.CollisionCount, sender.Name);
 
         if (state.CollisionCount >= _config.CollisionDQLimit)
-        {
-            state.ActiveSession?.DisqualifyParticipant(
-                sender.SessionId, DqReason.TooManyCollisions, _carStates);
-        }
+            state.ActiveSession?.DisqualifyParticipant(sender.SessionId, DqReason.TooManyCollisions, _carStates);
     }
 
-    // ── Chat commands (public — called from ScrambleCommandModule) ─────────────
-
-    /// <summary>
-    /// Handles a player typing /scramble. Validates they are in a starting area
-    /// and no race is already in progress there, then creates a new <see cref="RaceSession"/>.
-    /// </summary>
-    public void HandleScrambleCommand(ACTcpClient client)
-    {
-        var state = _carStates[client.SessionId];
-        if (state == null) return;
-
-        // Reject if no starting areas configured (legacy-only mode)
-        if (_startAreas.Count == 0)
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "No starting areas are configured on this server."
-            });
-            return;
-        }
-
-        // Find the starting area the player is currently in
-        var area = PolygonContainment.FindContainingArea(_startAreas, state.LastKnownPosition);
-        if (area == null)
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "You must be in a starting area to begin a race."
-            });
-            return;
-        }
-
-        // Reject if a race is already running from this area
-        if (_activeSessions.ContainsKey(area.Name))
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = $"A race from {area.Name} is already in progress."
-            });
-            return;
-        }
-
-        // Pick a destination — for now, use the first configured destination.
-        // Future: allow destination selection via command argument.
-        if (_destinations.Count == 0)
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "No destinations are configured on this server."
-            });
-            return;
-        }
-
-        var destination = _destinations.Values.First();
-
-        var session = new RaceSession(
-            area.Name,
-            destination,
-            client,
-            _config,
-            _entryCarManager,
-            OnSessionEnd);
-
-        _activeSessions[area.Name] = session;
-        state.ActiveSession = session;
-
-        // Auto-enroll every connected player
-        foreach (var car in _entryCarManager.EntryCars)
-        {
-            if (car.Client is not { } other) continue;
-            if (other.SessionId == client.SessionId) continue; // initiator already in session
-            var otherState = _carStates[other.SessionId];
-            if (otherState?.ActiveSession != null) continue;   // already in another race
-            session.AddParticipant(other);
-            if (otherState != null) otherState.ActiveSession = session;
-        }
-
-        string playerName = client.Name ?? $"Car {client.SessionId}";
-        _entryCarManager.BroadcastPacket(new ChatMessage
-        {
-            SessionId = 255,
-            Message = $"\xF0\x9F\x8F\x81 {playerName} started a race from {area.Name} to {destination.Name}! " +
-                      $"Race starts in {_config.TimeToAcceptSeconds}s \u2014 get ready!"
-        });
-
-        Log.Information("ScramblePlugin: Race initiated by {Player} from {Area} to {Dest} — auto-enrolled {Count} players",
-            playerName, area.Name, destination.Name, session.Participants.Count);
-    }
-
-    /// <summary>
-    /// Handles a panel-initiated (or chat-typed) race to a named destination.
-    /// Unlike <see cref="HandleScrambleCommand"/>, no starting area is required —
-    /// the race starts from wherever the initiator currently is.
-    /// </summary>
-    private void HandlePanelRace(ACTcpClient client, string destName)
-    {
-        var state = _carStates[client.SessionId];
-        if (state == null) return;
-
-        if (!_destinations.TryGetValue(destName, out var dest))
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = $"Unknown destination: \"{destName}\". Check spelling or use the panel."
-            });
-            return;
-        }
-
-        // One panel race per initiator at a time
-        string sessionKey = $"@panel_{client.SessionId}";
-        if (_activeSessions.ContainsKey(sessionKey) || state.ActiveSession != null)
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "You are already in a race."
-            });
-            return;
-        }
-
-        string playerName = client.Name ?? $"Car {client.SessionId}";
-
-        var session = new RaceSession(
-            playerName,
-            dest,
-            client,
-            _config,
-            _entryCarManager,
-            _ => _activeSessions.TryRemove(sessionKey, out _));
-
-        _activeSessions[sessionKey] = session;
-        state.ActiveSession = session;
-
-        // Auto-enroll all connected players
-        foreach (var car in _entryCarManager.EntryCars)
-        {
-            if (car.Client is not { } other) continue;
-            if (other.SessionId == client.SessionId) continue;
-            var otherState = _carStates[other.SessionId];
-            if (otherState?.ActiveSession != null) continue;
-            session.AddParticipant(other);
-            if (otherState != null) otherState.ActiveSession = session;
-        }
-
-        _entryCarManager.BroadcastPacket(new ChatMessage
-        {
-            SessionId = 255,
-            Message = $"\xF0\x9F\x8F\x81 {playerName} started a race to {dest.Name}! " +
-                      $"Race starts in {_config.TimeToAcceptSeconds}s \u2014 get ready!"
-        });
-
-        Log.Information("ScramblePlugin: Panel race started by {Player} to {Dest} — {Count} participants",
-            playerName, dest.Name, session.Participants.Count);
-    }
-
-    // ── Legacy !scramble chat command handling ────────────────────────────────
+    // ── Chat commands ─────────────────────────────────────────────────────────
 
     private void OnChatMessage(ACTcpClient sender, ChatMessageEventArgs e)
     {
         string msg = e.ChatMessage.Message?.Trim() ?? "";
 
-        // /scramble [race:Dest | DestName | (empty)] — unified entry point
-        if (msg.StartsWith("/scramble", StringComparison.OrdinalIgnoreCase))
+        // /scramble — initiate a race from a starting area
+        if (msg.Equals("/scramble", StringComparison.OrdinalIgnoreCase))
         {
-            string rest = msg.Length > "/scramble".Length
-                ? msg["/scramble".Length..].TrimStart()
-                : "";
-
-            if (rest.StartsWith("race:", StringComparison.OrdinalIgnoreCase))
-            {
-                // Panel-initiated full race: /scramble race:DestName
-                string destArg = rest[5..].Trim().Replace('_', ' ');
-                HandlePanelRace(sender, destArg);
-            }
-            else if (rest.Length > 0)
-            {
-                // Chat-typed destination: /scramble Daishi PA
-                HandlePanelRace(sender, rest);
-            }
-            else
-            {
-                // StartArea mode: /scramble (requires polygon area config)
-                HandleScrambleCommand(sender);
-            }
+            HandleScrambleCommand(sender);
             return;
         }
 
-        // Legacy !scramble commands — handled for backward compatibility
+        // /accept — join a pending race at your current starting area
+        if (msg.Equals("/accept", StringComparison.OrdinalIgnoreCase))
+        {
+            HandleAcceptCommand(sender);
+            return;
+        }
+
+        // Legacy GPS-only commands (panel convoy / lap / catmouse / clear)
         if (!msg.StartsWith("!scramble ", StringComparison.OrdinalIgnoreCase)) return;
 
         string arg = msg["!scramble ".Length..].Trim();
@@ -409,16 +221,157 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         string destName = arg[(colonIdx + 1)..].Trim().Replace('_', ' ');
         if (!_destinations.TryGetValue(destName, out var dest)) return;
 
-        // Legacy mode: send Racing state directly to the requesting player only
+        // Legacy GPS-only mode: send Racing state to requesting player only (no race tracking)
         sender.SendPacket(new ScrambleRaceStateEvent
         {
-            RaceState = RaceState.Racing,
-            DestName = dest.Name,
-            DestX = dest.Coordinates[0],
-            DestY = dest.Coordinates[1],
-            DestZ = dest.Coordinates[2],
-            DestRadius = dest.Radius,
+            RaceState    = RaceState.Racing,
+            DestName     = dest.Name,
+            DestX        = dest.Coordinates[0],
+            DestY        = dest.Coordinates[1],
+            DestZ        = dest.Coordinates[2],
+            DestRadius   = dest.Radius,
             RaceStartsAt = 0
+        });
+    }
+
+    // ── /scramble ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Handles /scramble: validates the player is in a starting area, picks a random
+    /// destination, and opens an accept window for other players to /accept.
+    /// </summary>
+    private void HandleScrambleCommand(ACTcpClient client)
+    {
+        var state = _carStates[client.SessionId];
+        if (state == null) return;
+
+        // Global race lock — only 1 race active at a time across the whole server
+        if (_activeSessions.Count > 0)
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = "A race is already in progress on this server."
+            });
+            return;
+        }
+
+        // Player already in a race
+        if (state.ActiveSession != null)
+        {
+            client.SendPacket(new ChatMessage { SessionId = 255, Message = "You are already in a race." });
+            return;
+        }
+
+        // Require StartAreas to be configured
+        if (_startAreas.Count == 0)
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = "No starting areas are configured on this server."
+            });
+            return;
+        }
+
+        // Player must be inside a starting area polygon
+        var area = PolygonContainment.FindContainingArea(_startAreas, state.LastKnownPosition);
+        if (area == null)
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = "You must be in a starting area to begin a race. Drive to a parking area first!"
+            });
+            return;
+        }
+
+        // No destinations configured
+        if (_destinations.Count == 0)
+        {
+            client.SendPacket(new ChatMessage { SessionId = 255, Message = "No destinations are configured on this server." });
+            return;
+        }
+
+        // Pick a random destination
+        var destList    = _destinations.Values.ToList();
+        var destination = destList[_rng.Next(destList.Count)];
+
+        var session = new RaceSession(area.Name, destination, client, _config, _entryCarManager, OnSessionEnd);
+        _activeSessions[area.Name] = session;
+        state.ActiveSession = session;
+
+        string playerName = client.Name ?? $"Car {client.SessionId}";
+        _entryCarManager.BroadcastPacket(new ChatMessage
+        {
+            SessionId = 255,
+            Message = $"\xF0\x9F\x8F\x81 {playerName} is starting a race from {area.Name} to {destination.Name}! " +
+                      $"Go to {area.Name} and type /accept to join! ({_config.TimeToAcceptSeconds}s)"
+        });
+
+        Log.Information("ScramblePlugin: Race initiated by {Player} from {Area} to {Dest}",
+            playerName, area.Name, destination.Name);
+    }
+
+    // ── /accept ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Handles /accept: joins the player to a pending race at their current starting area.
+    /// </summary>
+    private void HandleAcceptCommand(ACTcpClient client)
+    {
+        var state = _carStates[client.SessionId];
+        if (state == null) return;
+
+        if (state.ActiveSession != null)
+        {
+            client.SendPacket(new ChatMessage { SessionId = 255, Message = "You are already in a race." });
+            return;
+        }
+
+        // Find which starting area the player is currently in
+        var playerArea = PolygonContainment.FindContainingArea(_startAreas, state.LastKnownPosition);
+        if (playerArea == null)
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = "You must be in a starting area to /accept. Drive to the starting area first!"
+            });
+            return;
+        }
+
+        // Check if there's a pending race at that area
+        if (!_activeSessions.TryGetValue(playerArea.Name, out var session) ||
+            session.Phase != RacePhase.AcceptWindow)
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = $"No race is accepting players at {playerArea.Name}."
+            });
+            return;
+        }
+
+        if (!session.TryAccept(client))
+        {
+            client.SendPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = "Could not join the race — it may have already started."
+            });
+            return;
+        }
+
+        state.ActiveSession = session;
+
+        string playerName = client.Name ?? $"Car {client.SessionId}";
+        int count = session.Participants.Count;
+        _entryCarManager.BroadcastPacket(new ChatMessage
+        {
+            SessionId = 255,
+            Message = $"\u2705 {playerName} joined the race to {session.Destination.Name}! " +
+                      $"({count} participant{(count == 1 ? "" : "s")})"
         });
     }
 
@@ -441,18 +394,15 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
                 if (coords.Length < 3) continue;
                 promoted.Add(new DestinationConfig
                 {
-                    Name = name,
-                    Radius = config.ArrivalRadiusMeters,
+                    Name       = name,
+                    Radius     = config.ArrivalRadiusMeters,
                     Coordinates = coords
                 });
             }
         }
 
         if (promoted.Count > 0)
-        {
-            Log.Information("ScramblePlugin: Auto-promoted {Count} legacy destinations from Maps config",
-                promoted.Count);
-        }
+            Log.Information("ScramblePlugin: Auto-promoted {Count} legacy destinations from Maps config", promoted.Count);
 
         return promoted;
     }

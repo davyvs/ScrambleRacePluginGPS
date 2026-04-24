@@ -497,17 +497,13 @@ local function showMain()
     ui.popFont()
     ui.separator()
 
-    if not RACE.isAdmin then
-        if ui.button("  Enter Admin Mode", vec2(-1, 0)) then RACE.isAdmin = true end
-    else
-        if ui.button("  \xe2\x96\xba Start Race...", vec2(-1, 0)) then
-            PANEL.view = "type_select"; PANEL.selDest = ""; PANEL.selRoute = ""; PANEL.selMouseName = ""
-        end
-        if RACE.mode ~= "idle" then
-            if ui.button("  \xe2\x96\xa0 Stop / Clear GPS", vec2(-1, 0)) then
-                broadcast("!scramble clear", { type="clear", params={"clear"} })
-                close = true
-            end
+    if ui.button("  \xe2\x96\xba Start Race...", vec2(-1, 0)) then
+        PANEL.view = "type_select"; PANEL.selDest = ""; PANEL.selRoute = ""; PANEL.selMouseName = ""
+    end
+    if RACE.mode ~= "idle" then
+        if ui.button("  \xe2\x96\xa0 Stop / Clear GPS", vec2(-1, 0)) then
+            broadcast("!scramble clear", { type="clear", params={"clear"} })
+            close = true
         end
     end
 
@@ -537,7 +533,14 @@ local function showTypeSelect()
     local close = false
     ui.pushFont(ui.Font.Small); ui.text("Select Race Type:"); ui.popFont()
     ui.separator()
-    if ui.button("  \xF0\x9F\x8F\x81  Point to Point",  vec2(-1, 0)) then PANEL.view = "config_p2p"    end
+    if ui.button("  \xF0\x9F\x8F\x81  Point to Point",  vec2(-1, 0)) then
+        -- Send /scramble — server picks a random destination; player must be in a starting area
+        if type(ac.sendChatMessage) == "function" then
+            ac.sendChatMessage("/scramble")
+        end
+        PANEL.view = "main"
+        return true
+    end
     if ui.button("  \xF0\x9F\x9A\x97  Convoy / Cruise", vec2(-1, 0)) then PANEL.view = "config_convoy"  end
     if ui.button("  \xF0\x9F\x94\xB5  Lap / Circuit",   vec2(-1, 0)) then PANEL.view = "config_lap"     end
     if ui.button("  \xF0\x9F\x90\xB1  Cat & Mouse",     vec2(-1, 0)) then PANEL.view = "config_cm"      end
@@ -559,19 +562,8 @@ local function showConfigDest(typeKey, title, cr, cg, cb)
     ui.separator()
     if PANEL.selDest ~= "" then
         if ui.button("  Start " .. title .. "  \xe2\x96\xba", vec2(-1, 0)) then
-            if typeKey == "p2p" then
-                -- Full server-managed race: server sends countdown + auto-enrolls everyone
-                if type(ac.sendChatMessage) == "function" then
-                    ac.sendChatMessage("/scramble race:" .. enc(PANEL.selDest))
-                end
-                -- Show GPS locally immediately while waiting for server countdown packet
-                applyCmd({ type = "p2p", params = { "p2p", PANEL.selDest } })
-                -- Note: do NOT call scrambleGpsSignal here — server sends
-                --       ScrambleRaceStateEvent(Countdown) to all participants
-            else
-                broadcast("!scramble " .. typeKey .. ":" .. enc(PANEL.selDest),
-                          { type = typeKey, params = { typeKey, PANEL.selDest } })
-            end
+            broadcast("!scramble " .. typeKey .. ":" .. enc(PANEL.selDest),
+                      { type = typeKey, params = { typeKey, PANEL.selDest } })
             PANEL.view = "main"; close = true
         end
     end
@@ -636,8 +628,7 @@ ui.registerOnlineExtra(_icon, "Scramble GPS", function() return true end, functi
     local v = PANEL.view
     if     v == "main"          then return showMain()
     elseif v == "type_select"   then return showTypeSelect()
-    elseif v == "config_p2p"    then return showConfigDest("p2p",    "\xF0\x9F\x8F\x81 Point to Point",  1, .4, .4)
-    elseif v == "config_convoy" then return showConfigDest("convoy",  "\xF0\x9F\x9A\x97 Convoy / Cruise", .2, .9, .55)
+    elseif v == "config_convoy" then return showConfigDest("convoy", "\xF0\x9F\x9A\x97 Convoy / Cruise", .2, .9, .55)
     elseif v == "config_lap"    then return showConfigLap()
     elseif v == "config_cm"     then return showConfigCM()
     else return showMain() end
@@ -708,30 +699,29 @@ end
 
 -- ── [10] script.drawUI DISPATCHER ────────────────────────
 
-local function drawCountdown()
-    if not (RACE.serverControlled and RACE.raceStartsAt > 0) then return end
-    local nowMs = os.clock() * 1000
-    local remaining = math.max(0, (RACE.raceStartsAt - nowMs) / 1000)
-    if remaining <= 0 then return end
-    local sx, _ = screenSize()
-    local bw, bh = 360, 52
-    local bx = sx / 2 - bw / 2
-    ui.drawRectFilled(vec2(bx, 30), vec2(bx + bw, 30 + bh), rgbm(0, 0, 0, 0.72))
-    ui.drawRect(vec2(bx, 30), vec2(bx + bw, 30 + bh), rgbm(1, 0.8, 0, 0.9), 2)
-    ui.setCursor(vec2(bx, 36))
-    ui.pushFont(ui.Font.Title)
-    ui.textAligned(string.format("\xF0\x9F\x8F\x81 Race starting in %.1fs", remaining),
-        vec2(0.5, 0.5), vec2(bw, bh - 12))
-    ui.popFont()
-end
-
 function script.drawUI()
-    drawCountdown()
-
     local alpha = RACE.fadeAlpha
     if alpha < 0.01 then return end
     local car = ac.getCar(0)
     if not car then return end
+
+    -- During accept window / countdown: show timer at compass position instead of GPS arrow
+    if RACE.serverControlled and RACE.raceStartsAt > 0 then
+        local remain = math.max(0, (RACE.raceStartsAt - os.clock() * 1000) / 1000)
+        if remain > 0 then
+            local sx, sy = screenSize()
+            local cx, cy, r = sx - 85, sy - 130, 40
+            local secs = math.ceil(remain)
+            ui.drawCircleFilled(vec2(cx, cy), r + 6, rgbm(0, 0, 0, 0.65 * alpha), 40)
+            ui.drawCircle(vec2(cx, cy), r + 6, rgbm(1, 0.8, 0, 0.9 * alpha), 40, 2)
+            ui.setCursor(vec2(cx - r - 6, cy - r - 6))
+            ui.pushFont(ui.Font.Title)
+            ui.textAligned(tostring(secs), vec2(0.5, 0.5), vec2((r + 6) * 2, (r + 6) * 2))
+            ui.popFont()
+            drawLabels(cx, cy, r, RACE.destName, "WAITING...", alpha)
+            return
+        end
+    end
 
     local mode = RACE.mode
 

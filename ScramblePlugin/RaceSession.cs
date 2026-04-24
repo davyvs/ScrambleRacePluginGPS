@@ -11,19 +11,19 @@ namespace ScramblePlugin;
 /// <summary>Represents the lifecycle phase of a race session.</summary>
 public enum RacePhase
 {
-    /// <summary>Countdown running before race starts; all players auto-enrolled.</summary>
-    Countdown,
+    /// <summary>Accept window open — waiting for players to /accept in the start area.</summary>
+    AcceptWindow,
 
     /// <summary>Race is live — tracking positions and collisions.</summary>
     Racing,
 
-    /// <summary>All participants have finished or been disqualified.</summary>
+    /// <summary>All participants have finished, been disqualified, or the session was cancelled.</summary>
     Finished
 }
 
 /// <summary>
 /// Manages the full lifecycle of a single scramble race:
-/// accept window → countdown → racing → finish/DQ for all participants.
+/// accept window → racing → finish/DQ/cancel.
 /// One instance exists per active starting area.
 /// </summary>
 public class RaceSession
@@ -35,9 +35,9 @@ public class RaceSession
     public DestinationConfig Destination { get; }
 
     /// <summary>Current race lifecycle phase.</summary>
-    public RacePhase Phase { get; private set; } = RacePhase.Countdown;
+    public RacePhase Phase { get; private set; } = RacePhase.AcceptWindow;
 
-    /// <summary>All participants, keyed by SessionId. Includes the initiator.</summary>
+    /// <summary>All participants (initiator + accepted players), keyed by SessionId.</summary>
     public Dictionary<byte, ACTcpClient> Participants { get; } = new();
 
     /// <summary>SessionIds of participants who have been disqualified.</summary>
@@ -50,11 +50,12 @@ public class RaceSession
     private readonly EntryCarManager _entryCarManager;
     private readonly Action<RaceSession> _onSessionEnd;
 
-    private long _countdownEndsAt;
+    private readonly byte _initiatorSessionId;
+    private long _acceptWindowEndsAt;
 
     /// <summary>
-    /// Initialises a new race session initiated by <paramref name="initiator"/>.
-    /// All connected players are auto-enrolled; the countdown starts immediately.
+    /// Creates a new race session in AcceptWindow phase.
+    /// Only the initiator is enrolled; others must /accept from the same starting area.
     /// </summary>
     public RaceSession(
         string startAreaName,
@@ -65,112 +66,141 @@ public class RaceSession
         Action<RaceSession> onSessionEnd)
     {
         StartAreaName = startAreaName;
-        Destination = destination;
-        _config = config;
-        _entryCarManager = entryCarManager;
-        _onSessionEnd = onSessionEnd;
+        Destination   = destination;
+        _config            = config;
+        _entryCarManager   = entryCarManager;
+        _onSessionEnd      = onSessionEnd;
+        _initiatorSessionId = initiator.SessionId;
 
         Participants[initiator.SessionId] = initiator;
 
-        // Start countdown immediately — initiator sees GPS straight away
-        Phase = RacePhase.Countdown;
-        _countdownEndsAt = Environment.TickCount64 + config.TimeToAcceptSeconds * 1000L;
+        Phase = RacePhase.AcceptWindow;
+        _acceptWindowEndsAt = Environment.TickCount64 + config.TimeToAcceptSeconds * 1000L;
 
+        // Send Countdown state to the initiator so they see the GPS compass + accept-window timer
         long raceStartsAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                             + config.TimeToAcceptSeconds * 1000L;
+                            + config.TimeToAcceptSeconds * 1000L;
         initiator.SendPacket(new ScrambleRaceStateEvent
         {
-            RaceState = RaceState.Countdown,
-            DestName = destination.Name,
-            DestX = destination.Coordinates[0],
-            DestY = destination.Coordinates[1],
-            DestZ = destination.Coordinates[2],
-            DestRadius = destination.Radius,
+            RaceState    = RaceState.Countdown,
+            DestName     = destination.Name,
+            DestX        = destination.Coordinates[0],
+            DestY        = destination.Coordinates[1],
+            DestZ        = destination.Coordinates[2],
+            DestRadius   = destination.Radius,
             RaceStartsAt = raceStartsAt
         });
     }
 
     /// <summary>
-    /// Joins a player into the running countdown (called during auto-enroll).
+    /// Attempts to add a player who typed /accept during the accept window.
+    /// Returns false if the window is closed or the player is already in the race.
     /// </summary>
-    public void AddParticipant(ACTcpClient client)
+    public bool TryAccept(ACTcpClient client)
     {
-        if (Phase != RacePhase.Countdown) return;
+        if (Phase != RacePhase.AcceptWindow) return false;
+        if (Participants.ContainsKey(client.SessionId)) return false;
 
         Participants[client.SessionId] = client;
-        Log.Information("ScramblePlugin: {Player} joined race from {Area} to {Dest}",
+        Log.Information("ScramblePlugin: {Player} accepted race from {Area} to {Dest}",
             client.Name, StartAreaName, Destination.Name);
 
-        // Send current countdown state to the late joiner
-        long remaining = Math.Max(0, _countdownEndsAt - Environment.TickCount64);
+        // Send current countdown state so the new participant sees GPS + remaining time
+        long remaining    = Math.Max(0, _acceptWindowEndsAt - Environment.TickCount64);
         long raceStartsAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + remaining;
         client.SendPacket(new ScrambleRaceStateEvent
         {
-            RaceState = RaceState.Countdown,
-            DestName = Destination.Name,
-            DestX = Destination.Coordinates[0],
-            DestY = Destination.Coordinates[1],
-            DestZ = Destination.Coordinates[2],
-            DestRadius = Destination.Radius,
+            RaceState    = RaceState.Countdown,
+            DestName     = Destination.Name,
+            DestX        = Destination.Coordinates[0],
+            DestY        = Destination.Coordinates[1],
+            DestZ        = Destination.Coordinates[2],
+            DestRadius   = Destination.Radius,
             RaceStartsAt = raceStartsAt
         });
+
+        return true;
     }
 
     /// <summary>
     /// Called from the service tick loop (~250 ms interval).
-    /// Advances the session through Countdown → Racing state machine.
+    /// Advances the session through its state machine.
     /// </summary>
     public void Tick(EntryCarRaceState[] carStates)
     {
-        if (Phase == RacePhase.Countdown)
-            TickCountdown(carStates);
+        if (Phase == RacePhase.AcceptWindow)
+            TickAcceptWindow(carStates);
     }
 
-    private void TickCountdown(EntryCarRaceState[] carStates)
+    private void TickAcceptWindow(EntryCarRaceState[] carStates)
     {
-        if (Environment.TickCount64 < _countdownEndsAt) return;
+        if (Environment.TickCount64 < _acceptWindowEndsAt) return;
 
+        // Need at least 1 player other than the initiator
+        int otherCount = Participants.Count - 1;
+
+        if (otherCount < 1)
+        {
+            // Nobody joined — cancel the race
+            Phase = RacePhase.Finished;
+
+            if (Participants.TryGetValue(_initiatorSessionId, out var initiator))
+            {
+                initiator.SendPacket(new ScrambleRaceStateEvent { RaceState = RaceState.Idle });
+                carStates[_initiatorSessionId]?.ClearRace();
+            }
+
+            _entryCarManager.BroadcastPacket(new ChatMessage
+            {
+                SessionId = 255,
+                Message = $"\u274C Race from {StartAreaName} to {Destination.Name} cancelled \u2014 no one joined."
+            });
+
+            Log.Information("ScramblePlugin: Race from {Area} to {Dest} cancelled — no participants joined",
+                StartAreaName, Destination.Name);
+
+            _onSessionEnd(this);
+            return;
+        }
+
+        // At least 1 other player joined — start the race
         Phase = RacePhase.Racing;
         Log.Information("ScramblePlugin: Race from {Area} to {Dest} started with {Count} participants",
             StartAreaName, Destination.Name, Participants.Count);
 
-        // Check speed at start — DQ any participant who is moving
+        // Speed check: DQ anyone moving at race start
         var toDisqualify = new List<byte>();
         foreach (var (sessionId, client) in Participants)
         {
             if (DisqualifiedIds.Contains(sessionId)) continue;
-            var car = client.EntryCar;
-            if (car.Status.Velocity.Length() > _config.MaxStartSpeedMs)
-            {
+            if (client.EntryCar.Status.Velocity.Length() > _config.MaxStartSpeedMs)
                 toDisqualify.Add(sessionId);
-            }
         }
-
         foreach (var sessionId in toDisqualify)
             DisqualifyParticipant(sessionId, Packets.DqReason.MovingAtStart, carStates);
 
-        // Send Racing state to remaining participants
+        // Send Racing state to all remaining participants
         foreach (var (sessionId, client) in Participants)
         {
             if (DisqualifiedIds.Contains(sessionId)) continue;
             client.SendPacket(new ScrambleRaceStateEvent
             {
-                RaceState = RaceState.Racing,
-                DestName = Destination.Name,
-                DestX = Destination.Coordinates[0],
-                DestY = Destination.Coordinates[1],
-                DestZ = Destination.Coordinates[2],
-                DestRadius = Destination.Radius,
+                RaceState    = RaceState.Racing,
+                DestName     = Destination.Name,
+                DestX        = Destination.Coordinates[0],
+                DestY        = Destination.Coordinates[1],
+                DestZ        = Destination.Coordinates[2],
+                DestRadius   = Destination.Radius,
                 RaceStartsAt = 0
             });
-            carStates[sessionId].ResetForRace();
+            carStates[sessionId]?.ResetForRace();
         }
 
         int activeCount = Participants.Count - DisqualifiedIds.Count;
         _entryCarManager.BroadcastPacket(new ChatMessage
         {
             SessionId = 255,
-            Message = $"\xF0\x9F\x8F\x81 {activeCount} player{(activeCount == 1 ? "" : "s")} started a race from {StartAreaName} to {Destination.Name}!"
+            Message = $"\xF0\x9F\x8F\x81 Race started! {activeCount} player{(activeCount == 1 ? "" : "s")} racing from {StartAreaName} to {Destination.Name}!"
         });
 
         CheckSessionComplete();
@@ -186,8 +216,8 @@ public class RaceSession
         if (!Participants.TryGetValue(sessionId, out var client)) return;
 
         ArrivedIds.Add(sessionId);
-        int position = ArrivedIds.Count;
-        string name = client.Name ?? $"Car {sessionId}";
+        int    position = ArrivedIds.Count;
+        string name     = client.Name ?? $"Car {sessionId}";
 
         Log.Information("ScramblePlugin: {Player} arrived at {Dest} in position {Pos}",
             name, Destination.Name, position);
@@ -200,53 +230,77 @@ public class RaceSession
 
         client.SendPacket(new ScrambleResultEvent
         {
-            Status = ResultStatus.Finished,
+            Status   = ResultStatus.Finished,
             Position = (byte)Math.Min(position, 255),
             DqReason = Packets.DqReason.None
         });
 
         client.SendPacket(new ScrambleRaceStateEvent { RaceState = RaceState.Idle });
-        carStates[sessionId].ClearRace();
+        carStates[sessionId]?.ClearRace();
 
         CheckSessionComplete();
     }
 
     /// <summary>
-    /// Disqualifies a participant with the given reason, notifying them and all other participants.
+    /// Disqualifies or removes a participant.
+    /// During AcceptWindow, cancels the race if the initiator leaves.
     /// </summary>
     public void DisqualifyParticipant(byte sessionId, byte reason, EntryCarRaceState[] carStates)
     {
+        if (Phase == RacePhase.AcceptWindow)
+        {
+            Participants.Remove(sessionId);
+            carStates[sessionId]?.ClearRace();
+
+            if (sessionId == _initiatorSessionId)
+            {
+                // Initiator left — cancel the whole race
+                Phase = RacePhase.Finished;
+                foreach (var (id, client) in Participants)
+                {
+                    client.SendPacket(new ScrambleRaceStateEvent { RaceState = RaceState.Idle });
+                    carStates[id]?.ClearRace();
+                }
+                _entryCarManager.BroadcastPacket(new ChatMessage
+                {
+                    SessionId = 255,
+                    Message = $"\u274C Race from {StartAreaName} cancelled \u2014 initiator disconnected."
+                });
+                _onSessionEnd(this);
+            }
+            return;
+        }
+
         if (DisqualifiedIds.Contains(sessionId)) return;
-        if (!Participants.TryGetValue(sessionId, out var client)) return;
+        if (!Participants.TryGetValue(sessionId, out var dqClient)) return;
 
         DisqualifiedIds.Add(sessionId);
-        string name = client.Name ?? $"Car {sessionId}";
+        string name       = dqClient.Name ?? $"Car {sessionId}";
         string reasonText = reason switch
         {
-            Packets.DqReason.Teleport => "teleport",
-            Packets.DqReason.MovingAtStart => "moving at race start",
+            Packets.DqReason.Teleport          => "teleport",
+            Packets.DqReason.MovingAtStart     => "moving at race start",
             Packets.DqReason.TooManyCollisions => "too many collisions",
-            Packets.DqReason.Disconnected => "disconnected",
-            _ => "unknown reason"
+            Packets.DqReason.Disconnected      => "disconnected",
+            _                                  => "unknown reason"
         };
 
-        Log.Information("ScramblePlugin: {Player} disqualified from race — {Reason}", name, reasonText);
+        Log.Information("ScramblePlugin: {Player} disqualified — {Reason}", name, reasonText);
 
-        client.SendPacket(new ScrambleResultEvent
+        dqClient.SendPacket(new ScrambleResultEvent
         {
-            Status = ResultStatus.Disqualified,
+            Status   = ResultStatus.Disqualified,
             Position = 0,
             DqReason = reason
         });
 
-        client.SendPacket(new ScrambleRaceStateEvent { RaceState = RaceState.Idle });
-        carStates[sessionId].ClearRace();
+        dqClient.SendPacket(new ScrambleRaceStateEvent { RaceState = RaceState.Idle });
+        carStates[sessionId]?.ClearRace();
 
-        // Notify other participants
         SendToAllParticipants(new ChatMessage
         {
             SessionId = 255,
-            Message = $"\xE2\x9D\x8C {name} has been disqualified ({reasonText})."
+            Message = $"\u274C {name} has been disqualified ({reasonText})."
         }, excludeSessionId: sessionId);
 
         CheckSessionComplete();
@@ -267,9 +321,7 @@ public class RaceSession
     {
         int remaining = Participants.Count - ArrivedIds.Count - DisqualifiedIds.Count;
         if (remaining <= 0)
-        {
             EndSession();
-        }
     }
 
     private void EndSession()
