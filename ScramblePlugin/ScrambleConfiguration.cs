@@ -19,10 +19,14 @@ public class ScrambleConfiguration : IValidateConfiguration<ScrambleConfiguratio
     public int MinParticipants { get; init; } = 1;
 
     /// <summary>Number of environment collisions before a participant is disqualified. 0 = disabled.</summary>
-    public int CollisionDQLimit { get; init; } = 3;
+    public int CollisionDQLimit { get; init; } = 0;
 
-    /// <summary>Single-frame position delta (metres) that is treated as a teleport and triggers DQ.</summary>
-    public float TeleportThresholdMeters { get; init; } = 100f;
+    /// <summary>
+    /// Single-frame position delta (metres) that is treated as a teleport and triggers DQ.
+    /// AC's built-in "reset to track" can move the car 200–400 m, so keep this high enough
+    /// to avoid false positives. Set to 0 to disable teleport DQ entirely.
+    /// </summary>
+    public float TeleportThresholdMeters { get; init; } = 500f;
 
     /// <summary>Maximum speed (m/s) allowed at race start. Participants moving faster are disqualified.</summary>
     public float MaxStartSpeedMs { get; init; } = 2.0f;
