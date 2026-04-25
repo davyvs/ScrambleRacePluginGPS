@@ -37,6 +37,8 @@ MAP_DATA.shutoko = {
         },
     },
     lapRouteNames = { "Bayshore Sprint", "Inner City Loop", "Full Shutoko" },
+    gpsMaxEdge      = 9000,  -- max straight-line distance (m) for a graph edge
+    gpsMaxNeighbors = 4,     -- how many nearest neighbours each node connects to
     startAreas = {
         "Shibaura PA",
         "Daishi PA",
@@ -151,6 +153,8 @@ MAP_DATA.sdc = {
         },
     },
     lapRouteNames = { "Grazalema Loop", "Mountain Pass", "Cadiz Road Tour" },
+    gpsMaxEdge      = 5000,  -- SDC has many closely-spaced road points
+    gpsMaxNeighbors = 5,
     startAreas = {
         "Oval Track Parking",
         "El Gastor Bus Stop",
@@ -179,6 +183,148 @@ local startAreaNames = mapCfg.startAreas or {}
 
 local ARRIVAL_DIST = 150
 
+-- ── [2b] ROAD GRAPH + A* PATHFINDING ────────────────────────────────────────
+-- The destinations table already contains real road positions.
+-- We connect each destination to its N nearest neighbours to build a rough
+-- road graph, then A* finds a multi-hop path to the target.
+-- The GPS arrow then points at the NEXT HOP rather than straight to the end.
+
+local ROAD_GRAPH = nil  -- built once on first update tick
+
+local function buildRoadGraph()
+    local maxEdge = mapCfg.gpsMaxEdge      or 5000
+    local maxK    = mapCfg.gpsMaxNeighbors or 5
+    local graph   = {}
+    local nodes   = {}
+    for name, pos in pairs(destinations) do
+        nodes[#nodes + 1] = { name = name, pos = pos }
+        graph[name] = {}
+    end
+    for _, a in ipairs(nodes) do
+        local cands = {}
+        for _, b in ipairs(nodes) do
+            if a.name ~= b.name then
+                -- Use XZ-plane distance so elevation doesn't distort edges
+                local dx = a.pos.x - b.pos.x
+                local dz = a.pos.z - b.pos.z
+                local d  = math.sqrt(dx*dx + dz*dz)
+                if d <= maxEdge then
+                    cands[#cands + 1] = { name = b.name, cost = d }
+                end
+            end
+        end
+        table.sort(cands, function(x, y) return x.cost < y.cost end)
+        for i = 1, math.min(maxK, #cands) do
+            graph[a.name][#graph[a.name] + 1] = cands[i]
+        end
+    end
+    return graph
+end
+
+-- A* over the road graph. Returns ordered list of destination names, or nil.
+local function findRoute(startName, endName)
+    if startName == endName then return { endName } end
+    if not ROAD_GRAPH then return nil end
+
+    local ep   = destinations[endName]
+    if not ep then return nil end
+
+    local open   = { startName }
+    local closed = {}
+    local from   = {}
+    local g      = { [startName] = 0 }
+    local f      = {}
+
+    local function h(name)
+        local p = destinations[name]
+        if not p then return math.huge end
+        local dx, dz = p.x - ep.x, p.z - ep.z
+        return math.sqrt(dx*dx + dz*dz)
+    end
+    f[startName] = h(startName)
+
+    local MAX_ITER = 300
+    for _ = 1, MAX_ITER do
+        if #open == 0 then break end
+
+        -- Pop node with lowest f
+        local bestIdx, bestF = 1, f[open[1]] or math.huge
+        for i = 2, #open do
+            local fi = f[open[i]] or math.huge
+            if fi < bestF then bestIdx, bestF = i, fi end
+        end
+        local cur = table.remove(open, bestIdx)
+
+        if cur == endName then
+            local path = { cur }
+            while from[cur] do
+                cur = from[cur]
+                table.insert(path, 1, cur)
+            end
+            return path
+        end
+
+        closed[cur] = true
+        for _, nb in ipairs(ROAD_GRAPH[cur] or {}) do
+            if not closed[nb.name] then
+                local ng = (g[cur] or math.huge) + nb.cost
+                if ng < (g[nb.name] or math.huge) then
+                    from[nb.name] = cur
+                    g[nb.name]    = ng
+                    f[nb.name]    = ng + h(nb.name)
+                    local found = false
+                    for _, n in ipairs(open) do
+                        if n == nb.name then found = true; break end
+                    end
+                    if not found then open[#open + 1] = nb.name end
+                end
+            end
+        end
+    end
+    return nil  -- no path found (disconnected graph)
+end
+
+-- Find the destination name closest to world position pos (XZ plane).
+local function nearestDest(pos)
+    local best, bestD = nil, math.huge
+    for name, dpos in pairs(destinations) do
+        local dx, dz = pos.x - dpos.x, pos.z - dpos.z
+        local d = math.sqrt(dx*dx + dz*dz)
+        if d < bestD then bestD = d; best = name end
+    end
+    return best, bestD
+end
+
+-- Compute a road-following route to destName and store it in RACE.
+-- Called whenever a new GPS destination is set.
+local function computeRoute(destName)
+    RACE.gpsRoute    = {}
+    RACE.gpsRouteIdx = 1
+    if not destinations[destName] then return end
+    if not ROAD_GRAPH then return end
+    local car = ac.getCar(0)
+    if not car then return end
+
+    local startName, startDist = nearestDest(car.position)
+    if not startName then return end
+
+    -- Already at destination – no routing needed
+    local ep = destinations[destName]
+    local dx, dz = car.position.x - ep.x, car.position.z - ep.z
+    if math.sqrt(dx*dx + dz*dz) < 300 then return end
+
+    local path = findRoute(startName, destName)
+    if not path or #path <= 1 then return end
+
+    RACE.gpsRoute    = path
+    RACE.gpsRouteIdx = (startDist < 250 and #path >= 2) and 2 or 1
+end
+
+local function _roadGraphInit()
+    if ROAD_GRAPH then return end
+    ROAD_GRAPH = buildRoadGraph()
+end
+
 -- ── [3] STATE ─────────────────────────────────────────────
 
 local RACE = {
@@ -203,6 +349,9 @@ local RACE = {
     serverControlled = false,  -- true when state comes from OnlineEvent
     destRadius       = 150,    -- arrival radius from server (metres)
     raceStartsAt     = 0,      -- Unix ms when countdown ends; 0 = not in countdown
+    -- Road-following GPS route (A* result)
+    gpsRoute         = {},     -- ordered list of destination names
+    gpsRouteIdx      = 1,      -- current waypoint index into gpsRoute
 }
 
 local PANEL = {
@@ -234,17 +383,19 @@ end
 -- ── [5] STATE APPLIER ────────────────────────────────────
 
 local function clearRace()
-    RACE.mode      = "idle"
-    RACE.role      = "none"
-    RACE.dest      = nil
-    RACE.destName  = ""
-    RACE.mouseSlot = -1
-    RACE.mouseName = ""
-    RACE.routeName = ""
-    RACE.waypoints = {}
-    RACE.wpNames   = {}
-    RACE.wpIndex   = 1
-    RACE.fadeTarget = 0.0
+    RACE.mode        = "idle"
+    RACE.role        = "none"
+    RACE.dest        = nil
+    RACE.destName    = ""
+    RACE.mouseSlot   = -1
+    RACE.mouseName   = ""
+    RACE.routeName   = ""
+    RACE.waypoints   = {}
+    RACE.wpNames     = {}
+    RACE.wpIndex     = 1
+    RACE.gpsRoute    = {}
+    RACE.gpsRouteIdx = 1
+    RACE.fadeTarget  = 0.0
 end
 
 local function localName()
@@ -276,6 +427,7 @@ local function applyCmd(cmd)
             RACE.mode = "p2p"; RACE.role = "navigator"
             RACE.dest = destinations[dest]; RACE.destName = dest
             RACE.fadeTarget = 1.0
+            computeRoute(dest)
         end
 
     elseif t == "convoy" then
@@ -285,6 +437,7 @@ local function applyCmd(cmd)
             RACE.mode = "convoy"; RACE.role = "navigator"
             RACE.dest = destinations[dest]; RACE.destName = dest
             RACE.fadeTarget = 1.0
+            computeRoute(dest)
         end
 
     elseif t == "lap" then
@@ -389,6 +542,7 @@ if hasScramblePlugin then
             RACE.destRadius   = msg.destRadius
             RACE.raceStartsAt = 0
             RACE.fadeTarget   = 1.0
+            computeRoute(msg.destName)
         end
     end)
 
@@ -431,6 +585,7 @@ if hasScramblePlugin then
             RACE.dest       = vec3(msg.destX, msg.destY, msg.destZ)
             RACE.destRadius = msg.destRadius
             RACE.fadeTarget = 1.0
+            if destinations[msg.destName] then computeRoute(msg.destName) end
         elseif msg.raceMode == 3 then
             -- catmouse: destName carries the mouse player's name
             clearRace()
@@ -800,14 +955,37 @@ function script.drawUI()
     local mode = RACE.mode
 
     if mode == "p2p" then
-        local cx, cy, r = drawArrow(car, RACE.dest, 1, .2, .2, alpha)
-        drawLabels(cx, cy, r, RACE.destName,
-            fmtDist((car.position - RACE.dest):length()), alpha)
+        -- Use next route waypoint when available, fall back to direct destination
+        local target, label
+        if #RACE.gpsRoute > 0 then
+            local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
+            local wpPos  = destinations[wpName]
+            local isLast = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
+            if wpPos then
+                target = wpPos
+                label  = isLast and RACE.destName or wpName
+            end
+        end
+        if not target then target = RACE.dest; label = RACE.destName end
+        local cx, cy, r = drawArrow(car, target, 1, .2, .2, alpha)
+        drawLabels(cx, cy, r, label,
+            fmtDist((car.position - target):length()), alpha)
 
     elseif mode == "convoy" then
-        local cx, cy, r = drawArrow(car, RACE.dest, .2, .9, .55, alpha)
-        drawLabels(cx, cy, r, "\xF0\x9F\x9A\x97 " .. RACE.destName,
-            fmtDist((car.position - RACE.dest):length()), alpha)
+        local target, label
+        if #RACE.gpsRoute > 0 then
+            local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
+            local wpPos  = destinations[wpName]
+            local isLast = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
+            if wpPos then
+                target = wpPos
+                label  = "\xF0\x9F\x9A\x97 " .. (isLast and RACE.destName or wpName)
+            end
+        end
+        if not target then target = RACE.dest; label = "\xF0\x9F\x9A\x97 " .. RACE.destName end
+        local cx, cy, r = drawArrow(car, target, .2, .9, .55, alpha)
+        drawLabels(cx, cy, r, label,
+            fmtDist((car.position - target):length()), alpha)
 
     elseif mode == "lap" then
         local wp = RACE.waypoints[RACE.wpIndex]
@@ -841,17 +1019,45 @@ end
 
 local function updateP2P(car)
     if not RACE.dest then return end
-    -- Use server-provided radius when ScramblePlugin is active, fallback to legacy constant
-    local arrivalDist = RACE.serverControlled and RACE.destRadius or ARRIVAL_DIST
-    if (car.position - RACE.dest):length() < arrivalDist then
-        if RACE.serverControlled then
-            -- Server will send ScrambleRaceStateEvent(Idle) when it detects arrival.
-            -- Do not clear locally — avoid flicker if the distance check fires slightly early.
-            return
+
+    local finalDist = RACE.serverControlled and RACE.destRadius or ARRIVAL_DIST
+
+    -- ── Route waypoint advancement ────────────────────────────────────────────
+    if #RACE.gpsRoute > 0 then
+        local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
+        local wpPos  = destinations[wpName]
+        if wpPos then
+            local isLast  = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
+            local thresh  = isLast and finalDist or math.max(200, finalDist * 0.6)
+            local d       = (car.position - wpPos):length()
+            if d < thresh then
+                if isLast then
+                    -- Final waypoint reached
+                    if RACE.serverControlled then return end
+                    if type(ac.sendChatMessage) == "function" and RACE.destName ~= "" then
+                        ac.sendChatMessage("\xF0\x9F\x8F\x81 " .. localName() ..
+                            " arrived at " .. RACE.destName .. "!")
+                    end
+                    clearRace()
+                else
+                    RACE.gpsRouteIdx = RACE.gpsRouteIdx + 1
+                end
+            end
+        else
+            -- Waypoint missing from local destinations — skip ahead
+            if RACE.gpsRouteIdx < #RACE.gpsRoute then
+                RACE.gpsRouteIdx = RACE.gpsRouteIdx + 1
+            end
         end
-        -- Legacy mode: announce arrival to all players, then clear GPS
+        return
+    end
+
+    -- ── Fallback: no route — straight-line arrival check ─────────────────────
+    if (car.position - RACE.dest):length() < finalDist then
+        if RACE.serverControlled then return end
         if type(ac.sendChatMessage) == "function" and RACE.destName ~= "" then
-            ac.sendChatMessage("\xF0\x9F\x8F\x81 " .. localName() .. " arrived at " .. RACE.destName .. "!")
+            ac.sendChatMessage("\xF0\x9F\x8F\x81 " .. localName() ..
+                " arrived at " .. RACE.destName .. "!")
         end
         clearRace()
     end
@@ -883,6 +1089,7 @@ function script.update(dt)
     RACE.fadeAlpha = RACE.fadeAlpha + (RACE.fadeTarget - RACE.fadeAlpha) * math.min(dt * 4, 1)
 
     _gpsInit()
+    _roadGraphInit()
 
     local mode = RACE.mode
     if mode == "idle" then return end
