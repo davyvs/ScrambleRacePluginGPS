@@ -151,7 +151,13 @@ MAP_DATA.sdc = {
         },
     },
     lapRouteNames = { "Grazalema Loop", "Mountain Pass", "Cadiz Road Tour" },
-    startAreas = {},  -- no race areas configured for SDC yet
+    startAreas = {
+        "Oval Track Parking",
+        "El Gastor Bus Stop",
+        "Grazalema",
+        "Montecorto Gas Station",
+        "Zahara de la Sierra",
+    },
 }
 
 -- ── [2] MAP SELECTION ────────────────────────────────────
