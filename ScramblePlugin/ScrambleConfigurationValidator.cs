@@ -17,8 +17,8 @@ public class ScrambleConfigurationValidator : AbstractValidator<ScrambleConfigur
             .WithMessage("CollisionDQLimit must be 0 (disabled) or a positive number.");
 
         RuleFor(c => c.TeleportThresholdMeters)
-            .GreaterThan(0)
-            .WithMessage("TeleportThresholdMeters must be greater than 0.");
+            .GreaterThanOrEqualTo(0f)
+            .WithMessage("TeleportThresholdMeters must be 0 (disabled) or a positive number.");
 
         RuleFor(c => c.MaxStartSpeedMs)
             .GreaterThanOrEqualTo(0)

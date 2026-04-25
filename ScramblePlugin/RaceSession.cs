@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server;
@@ -38,13 +39,13 @@ public class RaceSession
     public RacePhase Phase { get; private set; } = RacePhase.AcceptWindow;
 
     /// <summary>All participants (initiator + accepted players), keyed by SessionId.</summary>
-    public Dictionary<byte, ACTcpClient> Participants { get; } = new();
+    public ConcurrentDictionary<byte, ACTcpClient> Participants { get; } = new();
 
     /// <summary>SessionIds of participants who have been disqualified.</summary>
-    public HashSet<byte> DisqualifiedIds { get; } = new();
+    public ConcurrentDictionary<byte, bool> DisqualifiedIds { get; } = new();
 
     /// <summary>SessionIds of participants who have successfully arrived.</summary>
-    public HashSet<byte> ArrivedIds { get; } = new();
+    public ConcurrentDictionary<byte, bool> ArrivedIds { get; } = new();
 
     private readonly ScrambleConfiguration _config;
     private readonly EntryCarManager _entryCarManager;
@@ -72,7 +73,7 @@ public class RaceSession
         _onSessionEnd      = onSessionEnd;
         _initiatorSessionId = initiator.SessionId;
 
-        Participants[initiator.SessionId] = initiator;
+        Participants.TryAdd(initiator.SessionId, initiator);
 
         Phase = RacePhase.AcceptWindow;
         _acceptWindowEndsAt = Environment.TickCount64 + config.TimeToAcceptSeconds * 1000L;
@@ -101,7 +102,7 @@ public class RaceSession
         if (Phase != RacePhase.AcceptWindow) return false;
         if (Participants.ContainsKey(client.SessionId)) return false;
 
-        Participants[client.SessionId] = client;
+        Participants.TryAdd(client.SessionId, client);
         Log.Information("ScramblePlugin: {Player} accepted race from {Area} to {Dest}",
             client.Name, StartAreaName, Destination.Name);
 
@@ -170,7 +171,7 @@ public class RaceSession
         var toDisqualify = new List<byte>();
         foreach (var (sessionId, client) in Participants)
         {
-            if (DisqualifiedIds.Contains(sessionId)) continue;
+            if (DisqualifiedIds.ContainsKey(sessionId)) continue;
             if (client.EntryCar.Status.Velocity.Length() > _config.MaxStartSpeedMs)
                 toDisqualify.Add(sessionId);
         }
@@ -180,7 +181,7 @@ public class RaceSession
         // Send Racing state to all remaining participants
         foreach (var (sessionId, client) in Participants)
         {
-            if (DisqualifiedIds.Contains(sessionId)) continue;
+            if (DisqualifiedIds.ContainsKey(sessionId)) continue;
             client.SendPacket(new ScrambleRaceStateEvent
             {
                 RaceState    = RaceState.Racing,
@@ -210,10 +211,10 @@ public class RaceSession
     public void RecordArrival(byte sessionId, EntryCarRaceState[] carStates)
     {
         if (Phase != RacePhase.Racing) return;
-        if (ArrivedIds.Contains(sessionId) || DisqualifiedIds.Contains(sessionId)) return;
+        if (ArrivedIds.ContainsKey(sessionId) || DisqualifiedIds.ContainsKey(sessionId)) return;
         if (!Participants.TryGetValue(sessionId, out var client)) return;
 
-        ArrivedIds.Add(sessionId);
+        ArrivedIds.TryAdd(sessionId, true);
         int    position = ArrivedIds.Count;
         string name     = client.Name ?? $"Car {sessionId}";
 
@@ -247,7 +248,7 @@ public class RaceSession
     {
         if (Phase == RacePhase.AcceptWindow)
         {
-            Participants.Remove(sessionId);
+            Participants.TryRemove(sessionId, out _);
             carStates[sessionId]?.ClearRace();
 
             if (sessionId == _initiatorSessionId)
@@ -269,10 +270,10 @@ public class RaceSession
             return;
         }
 
-        if (DisqualifiedIds.Contains(sessionId)) return;
+        if (DisqualifiedIds.ContainsKey(sessionId)) return;
         if (!Participants.TryGetValue(sessionId, out var dqClient)) return;
 
-        DisqualifiedIds.Add(sessionId);
+        DisqualifiedIds.TryAdd(sessionId, true);
         string name       = dqClient.Name ?? $"Car {sessionId}";
         string reasonText = reason switch
         {
@@ -310,7 +311,7 @@ public class RaceSession
         foreach (var (sessionId, client) in Participants)
         {
             if (excludeSessionId.HasValue && sessionId == excludeSessionId.Value) continue;
-            if (DisqualifiedIds.Contains(sessionId)) continue;
+            if (DisqualifiedIds.ContainsKey(sessionId)) continue;
             client.SendPacket(packet);
         }
     }

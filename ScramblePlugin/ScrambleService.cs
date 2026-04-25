@@ -42,6 +42,9 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
     // Random source for destination selection
     private readonly Random _rng = new();
 
+    // Ensures the global race lock check + session insert are atomic
+    private readonly object _sessionLock = new();
+
     public ScrambleService(
         EntryCarManager entryCarManager,
         ScrambleConfiguration config,
@@ -143,8 +146,8 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
 
         Vector3 newPos = update.Position;
 
-        // Teleport detection — only while actively racing
-        if (state.IsRacing && state.HasPosition)
+        // Teleport detection — only while actively racing; 0 = disabled
+        if (state.IsRacing && state.HasPosition && _config.TeleportThresholdMeters > 0)
         {
             float delta = Vector3.Distance(newPos, state.LastKnownPosition);
             if (delta > _config.TeleportThresholdMeters)
@@ -235,18 +238,7 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         var state = _carStates[client.SessionId];
         if (state == null) return;
 
-        // Global race lock — only 1 race active at a time across the whole server
-        if (_activeSessions.Count > 0)
-        {
-            client.SendPacket(new ChatMessage
-            {
-                SessionId = 255,
-                Message = "A race is already in progress on this server."
-            });
-            return;
-        }
-
-        // Player already in a race
+        // Player already in a race (fast pre-check, no lock needed)
         if (state.ActiveSession != null)
         {
             client.SendPacket(new ChatMessage { SessionId = 255, Message = "You are already in a race." });
@@ -283,13 +275,30 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
             return;
         }
 
-        // Pick a random destination
+        // Pick a random destination (before the lock — no shared state mutation here)
         var destList    = _destinations.Values.ToList();
         var destination = destList[_rng.Next(destList.Count)];
 
-        var session = new RaceSession(area.Name, destination, client, _config, _entryCarManager, OnSessionEnd);
-        _activeSessions[area.Name] = session;
-        state.ActiveSession = session;
+        // ── Atomic global-lock check + session insert ─────────────────────────
+        // Without this lock, two simultaneous /scramble from different areas
+        // could both pass the Count > 0 check before either writes to _activeSessions.
+        RaceSession session;
+        lock (_sessionLock)
+        {
+            if (_activeSessions.Count > 0)
+            {
+                client.SendPacket(new ChatMessage
+                {
+                    SessionId = 255,
+                    Message = "A race is already in progress on this server."
+                });
+                return;
+            }
+
+            session = new RaceSession(area.Name, destination, client, _config, _entryCarManager, OnSessionEnd);
+            _activeSessions[area.Name] = session;
+            state.ActiveSession = session;
+        }
 
         string playerName = client.Name ?? $"Car {client.SessionId}";
         _entryCarManager.BroadcastPacket(new ChatMessage
