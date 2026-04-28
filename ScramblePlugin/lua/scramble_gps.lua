@@ -10,6 +10,14 @@
 local MAP_DATA = {}
 
 MAP_DATA.shutoko = {
+    acTrackFolder = "shuto_revival_project_beta",  -- AC content/tracks folder name
+    mapViewRange  = 4500,   -- max metres from player to panel edge (zoom cap)
+    -- map.ini fallback values (used when io.open is sandboxed)
+    mapScale      = 3.31084418296814,
+    mapXOffset    = 11141.494140625,
+    mapZOffset    = 10476.2548828125,
+    mapImgW       = 5534.9033203125,
+    mapImgH       = 8177.9033203125,
     destinations = {
         ["Bayshore - Kawasaki Port"] = vec3(-83.84,     7.10,  10983.11),
         ["C1 Outer - Edobashi JCT"]  = vec3(2512.15,   12.23,  -9223.27),
@@ -50,6 +58,14 @@ MAP_DATA.shutoko = {
 }
 
 MAP_DATA.sdc = {
+    acTrackFolder = "sierra_de_cadiz",  -- AC content/tracks folder name
+    mapViewRange  = 3500,   -- max metres from player to panel edge (zoom cap)
+    -- map.ini fallback values (used when io.open is sandboxed)
+    mapScale      = 5.0,
+    mapXOffset    = 16000,
+    mapZOffset    = 15000,
+    mapImgW       = 165000,
+    mapImgH       = 155000,
     destinations = {
         ["A-2300"]                          = vec3( 2021.2,   25.4,   1634.8),
         ["A-2300 2"]                        = vec3(  235.1,   26.4,   1074.7),
@@ -323,6 +339,143 @@ end
 local function _roadGraphInit()
     if ROAD_GRAPH then return end
     ROAD_GRAPH = buildRoadGraph()
+end
+
+-- ── [2c] TRACK MAP INFO (for minimap panel) ──────────────────────────────────
+
+local MAP_INFO = {
+    loaded    = false,
+    iniParsed = false,  -- true when map.ini was successfully read (scale/offsets are valid)
+    path      = nil,    -- string = PNG path; false = no tracks dir found at all
+    scale     = 1.0,    -- SCALE_FACTOR from map.ini (map pixels per metre)
+    xOff      = 0.0,    -- X_OFFSET  (world X + xOff) * scale = map pixel X
+    zOff      = 0.0,    -- Z_OFFSET
+    imgW      = 1024,   -- WIDTH  (pixels)
+    imgH      = 1024,   -- HEIGHT (pixels)
+}
+
+local function _loadMapInfo()
+    if MAP_INFO.loaded then return end
+    MAP_INFO.loaded = true
+
+    -- ── Content/tracks directory ───────────────────────────────────────────────
+    local tracksDir = ""
+    if ac.getFolder then
+        local ok, v = pcall(function() return ac.getFolder(ac.FolderID.ContentTracks) end)
+        if ok and v and v ~= "" then
+            tracksDir = v
+        else
+            local ok2, root = pcall(function() return ac.getFolder(ac.FolderID.Root) end)
+            if ok2 and root and root ~= "" then tracksDir = root .. "/content/tracks" end
+        end
+    end
+    if tracksDir == "" then MAP_INFO.path = false; return end
+
+    -- ── Build search directory list ────────────────────────────────────────────
+    local searchDirs = {}
+
+    -- 1. Dynamic: use CSP track ID functions
+    local trackID = ""
+    if ac.getTrackFullID then
+        local ok, v = pcall(function() return ac.getTrackFullID("/") end)
+        if ok and v and v ~= "" then trackID = v end
+    end
+    if trackID == "" then
+        local ok1, tid = pcall(function() return ac.getTrackID and ac.getTrackID() end)
+        if ok1 and tid and tid ~= "" then
+            trackID = tid
+            local ok2, lid = pcall(function() return ac.getTrackConfigID and ac.getTrackConfigID() end)
+            if ok2 and lid and lid ~= "" then trackID = trackID .. "/" .. lid end
+        end
+    end
+    if trackID ~= "" then
+        local baseDir = tracksDir .. "/" .. trackID
+        searchDirs[#searchDirs + 1] = baseDir
+        searchDirs[#searchDirs + 1] = baseDir .. "/data"
+        -- Also try parent dir (for layout tracks where map lives at root)
+        local parent = baseDir:match("^(.*)/[^/]+$")
+        if parent and parent ~= tracksDir then searchDirs[#searchDirs + 1] = parent end
+        -- Also try stripping any "csp/…/" prefix — server paths use csp/XXXX/../E/../trackname
+        local baseName = trackID:match("[^/]+$")
+        if baseName and baseName ~= trackID then
+            searchDirs[#searchDirs + 1] = tracksDir .. "/" .. baseName
+            searchDirs[#searchDirs + 1] = tracksDir .. "/" .. baseName .. "/data"
+        end
+    end
+
+    -- 2. Hardcoded fallback from MAP_DATA (known track folder names)
+    local hardcoded = mapCfg.acTrackFolder or ""
+    if hardcoded ~= "" then
+        searchDirs[#searchDirs + 1] = tracksDir .. "/" .. hardcoded
+        searchDirs[#searchDirs + 1] = tracksDir .. "/" .. hardcoded .. "/data"
+    end
+
+    -- ── Find map PNG ───────────────────────────────────────────────────────────
+    local function tryOpen(p)
+        local ok, f = pcall(io.open, p, "rb")
+        if ok and f then pcall(function() f:close() end); return true end
+        return false
+    end
+
+    for _, dir in ipairs(searchDirs) do
+        for _, name in ipairs({"map_mini.png", "map.png"}) do
+            local p = dir .. "/" .. name
+            if tryOpen(p) then MAP_INFO.path = p; break end
+        end
+        if MAP_INFO.path then break end
+    end
+
+    -- If io.open unavailable (CSP sandbox), guess via hardcoded folder — ui.drawImage
+    -- silently draws nothing if wrong, so this is safe.
+    if not MAP_INFO.path then
+        local fallbackDir = hardcoded ~= "" and (tracksDir .. "/" .. hardcoded)
+                            or (#searchDirs > 0 and searchDirs[1])
+                            or nil
+        if fallbackDir then MAP_INFO.path = fallbackDir .. "/map_mini.png" end
+    end
+
+    if not MAP_INFO.path then MAP_INFO.path = false; return end
+
+    -- ── Parse map.ini (try file first, then hardcoded MAP_DATA fallback) ───────
+    local function parseIni(dir)
+        local ok, f = pcall(io.open, dir .. "/map.ini", "r")
+        if not ok or not f then return false end
+        local parsed = false
+        pcall(function()
+            for line in f:lines() do
+                local k, v = line:match("^%s*([%w_]+)%s*=%s*([%d%.%-]+)")
+                if k and v then
+                    local uk = k:upper()
+                    if uk == "SCALE_FACTOR" or uk == "SCALE" then
+                        MAP_INFO.scale = tonumber(v) or 1; parsed = true end
+                    if uk == "X_OFFSET"    then MAP_INFO.xOff = tonumber(v) or 0; parsed = true end
+                    if uk == "Z_OFFSET"    then MAP_INFO.zOff = tonumber(v) or 0; parsed = true end
+                    if uk == "WIDTH"       then MAP_INFO.imgW = math.max(1, tonumber(v) or 1024) end
+                    if uk == "HEIGHT"      then MAP_INFO.imgH = math.max(1, tonumber(v) or 1024) end
+                end
+            end
+        end)
+        pcall(function() f:close() end)
+        if parsed then MAP_INFO.iniParsed = true end
+        return parsed
+    end
+
+    for _, dir in ipairs(searchDirs) do
+        if parseIni(dir) then break end
+    end
+
+    -- Hardcoded fallback: use MAP_DATA values when io.open is sandboxed or file missing
+    if not MAP_INFO.iniParsed then
+        local s = mapCfg.mapScale
+        if s and s > 0 then
+            MAP_INFO.scale     = s
+            MAP_INFO.xOff      = mapCfg.mapXOffset  or 0
+            MAP_INFO.zOff      = mapCfg.mapZOffset  or 0
+            MAP_INFO.imgW      = math.max(1, mapCfg.mapImgW or 1024)
+            MAP_INFO.imgH      = math.max(1, mapCfg.mapImgH or 1024)
+            MAP_INFO.iniParsed = true
+        end
+    end
 end
 
 -- ── [3] STATE ─────────────────────────────────────────────
@@ -850,25 +1003,307 @@ local function screenSize()
     return (u and u.windowSize.x or 1920), (u and u.windowSize.y or 1080)
 end
 
+local function clamp(v, lo, hi)
+    return math.max(lo, math.min(hi, v))
+end
+
+local function fmtDist(d)
+    return d >= 1000 and string.format("%.1f km", d/1000) or string.format("%d m", math.floor(d+.5))
+end
+
+local function nowMs()
+    if RACE.raceStartsAt and RACE.raceStartsAt > 1000000000000 then
+        return os.time() * 1000
+    end
+    return os.clock() * 1000
+end
+
 -- ── GPS compass position ─────────────────────────────────────
 
-local GPS_R   = 40   -- compass circle radius
+local GPS_R   = 54   -- compass circle radius
 local GPS_POS = nil  -- vec2; nil until first update tick
+local GPS_ZOOM = 1.0
 
 local function _gpsDefault()
     local sx, sy = screenSize()
-    return vec2(sx - 85, sy - 130)
+    return vec2(sx - 165, sy - 180)  -- centre of the larger panel, near bottom-right
 end
 
 local function _gpsInit()
     if GPS_POS then return end
     local x = ac.storage.scrambleGpsX
     local y = ac.storage.scrambleGpsY
+    local z = ac.storage.scrambleGpsZoom
     if type(x) == "number" and x > 0 then
         GPS_POS = vec2(x, y)
     else
         GPS_POS = _gpsDefault()
     end
+    if type(z) == "number" and z > 0 then
+        GPS_ZOOM = clamp(z, 0.65, 2.2)
+    end
+end
+
+local MAP_SIZE     = 260   -- side length of the minimap panel in pixels
+local _mapViewRng  = 3000  -- current (smoothed) metres from player to panel edge
+
+local function saveGpsPlacement()
+    ac.storage.scrambleGpsX = GPS_POS.x
+    ac.storage.scrambleGpsY = GPS_POS.y
+    ac.storage.scrambleGpsZoom = GPS_ZOOM
+end
+
+local function nudgeGps(dx, dy)
+    local sx, sy = screenSize()
+    local half = MAP_SIZE * 0.5
+    GPS_POS = vec2(
+        clamp(GPS_POS.x + dx, half + 4, sx - half - 4),
+        clamp(GPS_POS.y + dy, half + 4, sy - half - 4))
+    saveGpsPlacement()
+end
+
+local function drawGpsControls(tl, br, alpha)
+    if type(ui.button) ~= "function" then return end
+
+    local bw, bh = 24, 22
+    local x = br.x - bw - 8
+    local y = tl.y + 54
+
+    ui.setCursor(vec2(x, y))
+    if ui.button("+##scrambleGpsZoomIn", vec2(bw, bh)) then
+        GPS_ZOOM = clamp(GPS_ZOOM + 0.15, 0.65, 2.2)
+        saveGpsPlacement()
+    end
+    ui.setCursor(vec2(x, y + 26))
+    if ui.button("-##scrambleGpsZoomOut", vec2(bw, bh)) then
+        GPS_ZOOM = clamp(GPS_ZOOM - 0.15, 0.65, 2.2)
+        saveGpsPlacement()
+    end
+
+    local mx = tl.x + 8
+    local my = br.y - 94
+    ui.setCursor(vec2(mx + 26, my))
+    if ui.button("^##scrambleGpsUp", vec2(bw, bh)) then nudgeGps(0, -24) end
+    ui.setCursor(vec2(mx, my + 24))
+    if ui.button("<##scrambleGpsLeft", vec2(bw, bh)) then nudgeGps(-24, 0) end
+    ui.setCursor(vec2(mx + 52, my + 24))
+    if ui.button(">##scrambleGpsRight", vec2(bw, bh)) then nudgeGps(24, 0) end
+    ui.setCursor(vec2(mx + 26, my + 48))
+    if ui.button("v##scrambleGpsDown", vec2(bw, bh)) then nudgeGps(0, 24) end
+
+    ui.setCursor(vec2(x - 28, y + 52))
+    ui.pushFont(ui.Font.Tiny)
+    ui.textColored(string.format("%.1fx", GPS_ZOOM), rgbm(1, 1, 1, 0.62 * alpha))
+    ui.popFont()
+end
+
+local function routeDistanceFrom(car)
+    if not RACE.dest then return 0 end
+    if #RACE.gpsRoute <= 0 then return (car.position - RACE.dest):length() end
+
+    local total = 0
+    local last = car.position
+    for i = RACE.gpsRouteIdx, #RACE.gpsRoute do
+        local wp = destinations[RACE.gpsRoute[i]]
+        if wp then
+            total = total + (last - wp):length()
+            last = wp
+        end
+    end
+    if RACE.gpsRoute[#RACE.gpsRoute] ~= RACE.destName then
+        total = total + (last - RACE.dest):length()
+    end
+    return total
+end
+
+local function activeTarget()
+    if #RACE.gpsRoute > 0 then
+        local name = RACE.gpsRoute[RACE.gpsRouteIdx]
+        local pos = name and destinations[name]
+        if pos then return pos, name, RACE.gpsRouteIdx >= #RACE.gpsRoute end
+    end
+    return RACE.dest, RACE.destName, true
+end
+
+local function drawPlayerMarker(cx, cy, look, alpha)
+    local len = math.sqrt(look.x * look.x + look.z * look.z)
+    if len < 0.001 then len = 1 end
+    local sx, sy = look.x / len, look.z / len
+    local px, py = -sy, sx
+    local center = vec2(cx, cy)
+    local nose = vec2(cx + sx * 19, cy + sy * 19)
+    local leftWing = vec2(cx - sx * 11 + px * 11, cy - sy * 11 + py * 11)
+    local rightWing = vec2(cx - sx * 11 - px * 11, cy - sy * 11 - py * 11)
+    local tail = vec2(cx - sx * 4, cy - sy * 4)
+
+    ui.drawCircleFilled(center, 20, rgbm(0, 0, 0, 0.52 * alpha), 24)
+    ui.drawTriangleFilled(
+        vec2(nose.x + sx * 2, nose.y + sy * 2),
+        vec2(leftWing.x - sx * 2 + px * 2, leftWing.y - sy * 2 + py * 2),
+        vec2(rightWing.x - sx * 2 - px * 2, rightWing.y - sy * 2 - py * 2),
+        rgbm(0, 0, 0, 0.85 * alpha))
+    ui.drawTriangleFilled(nose, leftWing, rightWing, rgbm(0.14, 0.95, 0.38, 0.98 * alpha))
+    ui.drawTriangleFilled(
+        vec2(cx + sx * 7, cy + sy * 7),
+        vec2(tail.x + px * 6, tail.y + py * 6),
+        vec2(tail.x - px * 6, tail.y - py * 6),
+        rgbm(0.9, 1, 0.95, 0.95 * alpha))
+    ui.drawCircleFilled(center, 3, rgbm(0, 0, 0, 0.55 * alpha), 8)
+end
+
+-- GPS minimap: player always centred, map scrolls underneath, dynamic zoom.
+-- Returns false ONLY when tracksDir couldn't be found (falls back to compass).
+local function drawMinimap(car, mode, alpha)
+    if MAP_INFO.path == false          then return false end
+    if type(MAP_INFO.path) ~= "string" then return false end
+
+    -- ── Dynamic zoom: smoothly track distance to next waypoint ────────────────
+    local maxRng = mapCfg.mapViewRange or 8000
+    local nextPos, nextWp, isFinalTarget = activeTarget()
+    local targetRng
+    if nextPos then
+        local d = math.sqrt((car.position.x - nextPos.x)^2 +
+                             (car.position.z - nextPos.z)^2)
+        targetRng = clamp((d * 0.85) / GPS_ZOOM, 220, maxRng)
+    elseif RACE.dest then
+        local d = math.sqrt((car.position.x - RACE.dest.x)^2 +
+                             (car.position.z - RACE.dest.z)^2)
+        targetRng = clamp((d * 0.85) / GPS_ZOOM, 220, maxRng)
+    else
+        targetRng = maxRng
+    end
+    _mapViewRng = _mapViewRng + (targetRng - _mapViewRng) * 0.03  -- smooth lerp
+
+    local cx, cy = GPS_POS.x, GPS_POS.y
+    local half   = MAP_SIZE * 0.5
+    local tl     = vec2(cx - half, cy - half)
+    local br     = vec2(cx + half, cy + half)
+    local ppm    = half / _mapViewRng  -- pixels per metre
+
+    -- World pos → screen pos (player always at cx, cy)
+    local px, pz = car.position.x, car.position.z
+    local function w2s(wpos)
+        return vec2(cx + (wpos.x - px) * ppm, cy + (wpos.z - pz) * ppm)
+    end
+
+    -- Edge-indicator arrow for a point that may be off-screen
+    local function edgeArrow(sp, r, g, b, a2)
+        local dx, dz = sp.x - cx, sp.y - cy
+        if math.abs(dx) < half - 8 and math.abs(dz) < half - 8 then return end
+        local t  = (half - 8) / math.max(math.abs(dx), math.abs(dz))
+        local ex, ey = cx + dx * t, cy + dz * t
+        local ang = math.atan2(dz, dx)
+        local s, c = math.sin(ang), math.cos(ang)
+        ui.drawTriangleFilled(
+            vec2(ex + c * 9,          ey + s * 9),
+            vec2(ex - c * 5 - s * 7, ey - s * 5 + c * 7),
+            vec2(ex - c * 5 + s * 7, ey - s * 5 - c * 7),
+            rgbm(r, g, b, a2 * alpha))
+    end
+
+    -- ── Background ────────────────────────────────────────────────────────────
+    ui.drawRectFilled(tl, br, rgbm(0.025, 0.035, 0.045, 0.94 * alpha))
+    ui.drawRectFilled(tl, vec2(br.x, tl.y + 46), rgbm(0, 0, 0, 0.62 * alpha))
+
+    local hasClip = type(ui.pushClipRect) == "function"
+    if hasClip then ui.pushClipRect(tl, br) end
+
+    -- ── Map texture (needs iniParsed so we know where to place it) ────────────
+    if MAP_INFO.iniParsed then
+        local mapWorldW  = MAP_INFO.imgW * MAP_INFO.scale
+        local mapWorldH  = MAP_INFO.imgH * MAP_INFO.scale
+        local imgTL = vec2(cx + (-MAP_INFO.xOff - px) * ppm,
+                           cy + (-MAP_INFO.zOff - pz) * ppm)
+        local imgBR = vec2(imgTL.x + mapWorldW * ppm, imgTL.y + mapWorldH * ppm)
+        ui.drawImage(MAP_INFO.path, imgTL, imgBR, rgbm(1, 1, 1, 0.72 * alpha))
+    end
+
+    ui.drawLine(vec2(cx - 18, cy), vec2(cx - 8, cy), rgbm(1, 1, 1, 0.2 * alpha), 1)
+    ui.drawLine(vec2(cx + 8, cy), vec2(cx + 18, cy), rgbm(1, 1, 1, 0.2 * alpha), 1)
+    ui.drawLine(vec2(cx, cy - 18), vec2(cx, cy - 8), rgbm(1, 1, 1, 0.2 * alpha), 1)
+    ui.drawLine(vec2(cx, cy + 8), vec2(cx, cy + 18), rgbm(1, 1, 1, 0.2 * alpha), 1)
+
+    -- ── Route line ────────────────────────────────────────────────────────────
+    if #RACE.gpsRoute > 1 then
+        for i = 1, #RACE.gpsRoute - 1 do
+            local a = destinations[RACE.gpsRoute[i]]
+            local b = destinations[RACE.gpsRoute[i + 1]]
+            if a and b then
+                ui.drawLine(w2s(a), w2s(b), rgbm(0, 0, 0, 0.65 * alpha), 8)
+                ui.drawLine(w2s(a), w2s(b), rgbm(1, 0.82, 0.12, 0.95 * alpha), 4)
+            end
+        end
+        -- Waypoint dots (intermediate only)
+        for i = 1, #RACE.gpsRoute - 1 do
+            local wp = destinations[RACE.gpsRoute[i]]
+            if wp then
+                ui.drawCircleFilled(w2s(wp), 7, rgbm(0, 0, 0, 0.65 * alpha), 12)
+                ui.drawCircleFilled(w2s(wp), 4, rgbm(1, 0.85, 0.1, 0.95 * alpha), 10)
+            end
+        end
+    end
+
+    -- ── Destination marker + off-screen edge arrow ────────────────────────────
+    if RACE.dest then
+        local pulse = 0.65 + 0.35 * math.abs(math.sin(os.clock() * 2.5))
+        local dp    = w2s(RACE.dest)
+        ui.drawCircleFilled(dp, 9, rgbm(1, 0.1, 0.1, pulse * alpha), 14)
+        ui.drawCircle(dp,       9, rgbm(1, 1,   1,   0.9 * alpha),   14, 2)
+        ui.drawCircleFilled(dp, 4, rgbm(1, 1,   1,   alpha),         8)
+        edgeArrow(dp, 1, 0.2, 0.2, pulse)
+    end
+
+    -- ── Next-waypoint edge arrow (gold, only when off-screen) ─────────────────
+    if nextPos then
+        edgeArrow(w2s(nextPos), 1, 0.85, 0, 0.9)
+    end
+
+    if hasClip then ui.popClipRect() end
+
+    -- ── Player: white dot + green heading arrow (never clipped) ──────────────
+    drawPlayerMarker(cx, cy, car.look, alpha)
+
+    -- ── Compass N ────────────────────────────────────────────────────────────
+    ui.setCursor(vec2(cx - 5, tl.y + 6))
+    ui.pushFont(ui.Font.Tiny)
+    ui.textColored("N", rgbm(0.8, 0.8, 0.8, 0.55 * alpha))
+    ui.popFont()
+
+    -- ── Panel border ──────────────────────────────────────────────────────────
+    ui.drawRect(tl, br, rgbm(0.55, 0.62, 0.7, 0.7 * alpha), 2)
+    drawGpsControls(tl, br, alpha)
+
+    -- ── Next-waypoint banner above panel ──────────────────────────────────────
+    if nextPos then
+        local ndist  = fmtDist(math.sqrt((px - nextPos.x)^2 + (pz - nextPos.z)^2))
+        local banner = (isFinalTarget and "FINISH" or "FOLLOW ROUTE") .. "  |  " .. ndist
+        ui.setCursor(vec2(tl.x + 8, tl.y + 8))
+        ui.pushFont(ui.Font.Small)
+        ui.textColored(banner, rgbm(1, 0.9, 0.25, 0.98 * alpha))
+        ui.popFont()
+        if nextWp and nextWp ~= "" then
+            ui.setCursor(vec2(tl.x + 8, tl.y + 28))
+            ui.pushFont(ui.Font.Tiny)
+            ui.textColored((isFinalTarget and "FINISH: " or "NEXT: ") .. nextWp, rgbm(1, 1, 1, 0.8 * alpha))
+            ui.popFont()
+        end
+    end
+
+    -- ── Destination name + total distance below panel ─────────────────────────
+    local icon  = (mode == "convoy") and "\xF0\x9F\x9A\x97 " or "\xF0\x9F\x8F\x81 "
+    local label = icon .. RACE.destName
+    local dist  = RACE.dest and fmtDist(routeDistanceFrom(car)) or ""
+    ui.drawRectFilled(vec2(tl.x, br.y - 42), br, rgbm(0, 0, 0, 0.62 * alpha))
+    ui.setCursor(vec2(tl.x + 8, br.y - 38))
+    ui.pushFont(ui.Font.Small)
+    ui.textAligned(label, vec2(0, 0), vec2(MAP_SIZE - 16, 18))
+    ui.popFont()
+    ui.setCursor(vec2(tl.x + 8, br.y - 20))
+    ui.pushFont(ui.Font.Small)
+    ui.textColored(dist .. " remaining", rgbm(1, 0.9, 0.25, 0.95 * alpha))
+    ui.popFont()
+
+    return true
 end
 
 local function drawArrow(car, target, cr, cg, cb, alpha)
@@ -908,10 +1343,6 @@ local function drawLabels(cx, cy, r, topLine, botLine, alpha)
     end
 end
 
-local function fmtDist(d)
-    return d >= 1000 and string.format("%.1f km", d/1000) or string.format("%d m", math.floor(d+.5))
-end
-
 local function drawMouseBadge(alpha)
     local sx, _ = screenSize()
     local pulse = math.abs(math.sin(os.clock() * 2.5))
@@ -937,7 +1368,7 @@ function script.drawUI()
 
     -- During accept window / countdown: show timer at compass position instead of GPS arrow
     if RACE.serverControlled and RACE.raceStartsAt > 0 then
-        local remain = math.max(0, (RACE.raceStartsAt - os.clock() * 1000) / 1000)
+        local remain = math.max(0, (RACE.raceStartsAt - nowMs()) / 1000)
         if remain > 0 then
             local cx, cy, r = GPS_POS.x, GPS_POS.y, GPS_R
             local secs = math.ceil(remain)
@@ -955,37 +1386,38 @@ function script.drawUI()
     local mode = RACE.mode
 
     if mode == "p2p" then
-        -- Use next route waypoint when available, fall back to direct destination
-        local target, label
-        if #RACE.gpsRoute > 0 then
-            local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
-            local wpPos  = destinations[wpName]
-            local isLast = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
-            if wpPos then
-                target = wpPos
-                label  = isLast and RACE.destName or wpName
+        if not drawMinimap(car, "p2p", alpha) then
+            -- Fallback: compass arrow when map PNG not available
+            local target, label
+            if #RACE.gpsRoute > 0 then
+                local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
+                local wpPos  = destinations[wpName]
+                local isLast = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
+                if wpPos then target = wpPos; label = isLast and RACE.destName or wpName end
+            end
+            if not target then target = RACE.dest; label = RACE.destName end
+            if target then
+                local cx, cy, r = drawArrow(car, target, 1, .2, .2, alpha)
+                drawLabels(cx, cy, r, label, fmtDist((car.position - target):length()), alpha)
             end
         end
-        if not target then target = RACE.dest; label = RACE.destName end
-        local cx, cy, r = drawArrow(car, target, 1, .2, .2, alpha)
-        drawLabels(cx, cy, r, label,
-            fmtDist((car.position - target):length()), alpha)
 
     elseif mode == "convoy" then
-        local target, label
-        if #RACE.gpsRoute > 0 then
-            local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
-            local wpPos  = destinations[wpName]
-            local isLast = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
-            if wpPos then
-                target = wpPos
-                label  = "\xF0\x9F\x9A\x97 " .. (isLast and RACE.destName or wpName)
+        if not drawMinimap(car, "convoy", alpha) then
+            -- Fallback: compass arrow when map PNG not available
+            local target, label
+            if #RACE.gpsRoute > 0 then
+                local wpName = RACE.gpsRoute[RACE.gpsRouteIdx]
+                local wpPos  = destinations[wpName]
+                local isLast = (RACE.gpsRouteIdx >= #RACE.gpsRoute)
+                if wpPos then target = wpPos; label = "\xF0\x9F\x9A\x97 " .. (isLast and RACE.destName or wpName) end
+            end
+            if not target then target = RACE.dest; label = "\xF0\x9F\x9A\x97 " .. RACE.destName end
+            if target then
+                local cx, cy, r = drawArrow(car, target, .2, .9, .55, alpha)
+                drawLabels(cx, cy, r, label, fmtDist((car.position - target):length()), alpha)
             end
         end
-        if not target then target = RACE.dest; label = "\xF0\x9F\x9A\x97 " .. RACE.destName end
-        local cx, cy, r = drawArrow(car, target, .2, .9, .55, alpha)
-        drawLabels(cx, cy, r, label,
-            fmtDist((car.position - target):length()), alpha)
 
     elseif mode == "lap" then
         local wp = RACE.waypoints[RACE.wpIndex]
@@ -1090,6 +1522,7 @@ function script.update(dt)
 
     _gpsInit()
     _roadGraphInit()
+    _loadMapInfo()
 
     local mode = RACE.mode
     if mode == "idle" then return end
