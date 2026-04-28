@@ -852,6 +852,22 @@ local function showMain()
         end
     end
 
+    -- Map zoom controls (buttons work here since this is a proper ImGui panel)
+    ui.separator()
+    ui.pushFont(ui.Font.Tiny)
+    ui.textColored("Map zoom  (or use  [  ]  keys)", rgbm(.7,.7,.7,1))
+    ui.popFont()
+    ui.dummy(vec2(0, 2))
+    if ui.button("  -  Zoom out", vec2(-1, 0)) then
+        GPS_ZOOM = clamp(GPS_ZOOM - 0.2, 0.4, 3.0); saveGpsPlacement()
+    end
+    if ui.button("  +  Zoom in",  vec2(-1, 0)) then
+        GPS_ZOOM = clamp(GPS_ZOOM + 0.2, 0.4, 3.0); saveGpsPlacement()
+    end
+    ui.pushFont(ui.Font.Tiny)
+    ui.textColored(string.format("Current: %.1fx", GPS_ZOOM), rgbm(.7,.7,.7,1))
+    ui.popFont()
+
     ui.separator()
     if ui.button("  Close", vec2(-1, 0)) then close = true end
     return close
@@ -1020,9 +1036,10 @@ end
 
 -- ── GPS compass position ─────────────────────────────────────
 
-local GPS_R   = 54   -- compass circle radius
-local GPS_POS = nil  -- vec2; nil until first update tick
-local GPS_ZOOM = 1.0
+local GPS_R        = 54   -- compass circle radius
+local GPS_POS      = nil  -- vec2; nil until first update tick
+local GPS_ZOOM     = 1.0
+local _zoomKeyTimer = 0   -- debounce for [ / ] zoom keys
 
 local function _gpsDefault()
     local sx, sy = screenSize()
@@ -1066,34 +1083,19 @@ local function drawGpsControls(tl, br, alpha)
     if type(ui.button) ~= "function" then return end
 
     local bw, bh = 24, 22
-    local x = br.x - bw - 8
-    local y = tl.y + 54
 
-    ui.setCursor(vec2(x, y))
-    if ui.button("+##scrambleGpsZoomIn", vec2(bw, bh)) then
-        GPS_ZOOM = clamp(GPS_ZOOM + 0.15, 0.65, 2.2)
-        saveGpsPlacement()
-    end
-    ui.setCursor(vec2(x, y + 26))
-    if ui.button("-##scrambleGpsZoomOut", vec2(bw, bh)) then
-        GPS_ZOOM = clamp(GPS_ZOOM - 0.15, 0.65, 2.2)
-        saveGpsPlacement()
-    end
-
+    -- Nudge arrows (visual only — clicks handled via IO in drawMinimap)
     local mx = tl.x + 8
     local my = br.y - 94
-    ui.setCursor(vec2(mx + 26, my))
-    if ui.button("^##scrambleGpsUp", vec2(bw, bh)) then nudgeGps(0, -24) end
-    ui.setCursor(vec2(mx, my + 24))
-    if ui.button("<##scrambleGpsLeft", vec2(bw, bh)) then nudgeGps(-24, 0) end
-    ui.setCursor(vec2(mx + 52, my + 24))
-    if ui.button(">##scrambleGpsRight", vec2(bw, bh)) then nudgeGps(24, 0) end
-    ui.setCursor(vec2(mx + 26, my + 48))
-    if ui.button("v##scrambleGpsDown", vec2(bw, bh)) then nudgeGps(0, 24) end
+    ui.setCursor(vec2(mx + 26, my))      ui.button("^##scrambleGpsUp",    vec2(bw, bh))
+    ui.setCursor(vec2(mx,      my + 24)) ui.button("<##scrambleGpsLeft",  vec2(bw, bh))
+    ui.setCursor(vec2(mx + 52, my + 24)) ui.button(">##scrambleGpsRight", vec2(bw, bh))
+    ui.setCursor(vec2(mx + 26, my + 48)) ui.button("v##scrambleGpsDown",  vec2(bw, bh))
 
-    ui.setCursor(vec2(x - 28, y + 52))
+    -- Zoom level display (top-right corner)
+    ui.setCursor(vec2(br.x - 44, tl.y + 6))
     ui.pushFont(ui.Font.Tiny)
-    ui.textColored(string.format("%.1fx", GPS_ZOOM), rgbm(1, 1, 1, 0.62 * alpha))
+    ui.textColored(string.format("%.1fx", GPS_ZOOM), rgbm(1, 1, 1, 0.55 * alpha))
     ui.popFont()
 end
 
@@ -1164,11 +1166,11 @@ local function drawMinimap(car, mode, alpha)
     if nextPos then
         local d = math.sqrt((car.position.x - nextPos.x)^2 +
                              (car.position.z - nextPos.z)^2)
-        targetRng = clamp((d * 0.85) / GPS_ZOOM, 220, maxRng)
+        targetRng = clamp(d * 0.85, 220, maxRng)
     elseif RACE.dest then
         local d = math.sqrt((car.position.x - RACE.dest.x)^2 +
                              (car.position.z - RACE.dest.z)^2)
-        targetRng = clamp((d * 0.85) / GPS_ZOOM, 220, maxRng)
+        targetRng = clamp(d * 0.85, 220, maxRng)
     else
         targetRng = maxRng
     end
@@ -1178,7 +1180,8 @@ local function drawMinimap(car, mode, alpha)
     local half   = MAP_SIZE * 0.5
     local tl     = vec2(cx - half, cy - half)
     local br     = vec2(cx + half, cy + half)
-    local ppm    = half / _mapViewRng  -- pixels per metre
+    -- GPS_ZOOM applied directly to ppm for instant visual effect (not through the lerp)
+    local ppm    = (half / _mapViewRng) * GPS_ZOOM
 
     -- World pos → screen pos (player always at cx, cy)
     local px, pz = car.position.x, car.position.z
@@ -1523,6 +1526,23 @@ function script.update(dt)
     _gpsInit()
     _roadGraphInit()
     _loadMapInfo()
+
+    -- ── Keyboard zoom: [ = zoom out, ] = zoom in ──────────────────────────────
+    _zoomKeyTimer = math.max(0, _zoomKeyTimer - dt)
+    if _zoomKeyTimer <= 0 and GPS_POS then
+        local zi, zo = false, false
+        pcall(function()
+            if type(ac.isKeyDown) == "function" then
+                zi = ac.isKeyDown(221)  -- ] key (VK_OEM_6)
+                zo = ac.isKeyDown(219)  -- [ key (VK_OEM_4)
+            end
+        end)
+        if zi then
+            GPS_ZOOM = clamp(GPS_ZOOM + 0.15, 0.4, 3.0); saveGpsPlacement(); _zoomKeyTimer = 0.2
+        elseif zo then
+            GPS_ZOOM = clamp(GPS_ZOOM - 0.15, 0.4, 3.0); saveGpsPlacement(); _zoomKeyTimer = 0.2
+        end
+    end
 
     local mode = RACE.mode
     if mode == "idle" then return end
