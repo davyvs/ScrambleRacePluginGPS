@@ -62,9 +62,20 @@ Click **Stop / Clear GPS** in the panel, or simply arrive at the destination.
 
 ## For Server Admins
 
+### Which Version Do I Need?
+
+This repository ships two compiled Linux x64 plugin builds:
+
+| AssettoServer version | Use this folder |
+|---|---|
+| **AssettoServer 0.54 / .NET 8** | `out-linux-x64/plugins/ScramblePlugin/` |
+| **AssettoServer 0.55 / .NET 9** | `out-linux-x64-055/plugins/ScramblePlugin/` |
+
+Use the folder that matches your AssettoServer version. The DLLs are not interchangeable: the 0.54 build targets `net8.0`, while the 0.55 build targets `net9.0` and uses the AssettoServer 0.55 plugin startup path.
+
 ### Installation
 
-1. **Copy the plugin** to your server's plugins folder:
+1. **Copy the correct plugin build** to your server's plugins folder:
    ```
    plugins/
    └── ScramblePlugin/
@@ -209,14 +220,21 @@ In-game coordinates can be found using the CSP **Track Coordinates Helper** app.
 
 ## Building from Source
 
-Requires [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) and the [AssettoServer](https://github.com/compujuckel/AssettoServer) source alongside this repo.
+The 0.54 build requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) and an AssettoServer 0.54 source checkout at `AssettoServer/`.
+
+The 0.55 build requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and an AssettoServer 0.55 source checkout at `AssettoServer-055/`.
 
 ```sh
 git clone https://github.com/davyvs/ScrambleRacePluginGPS
-git clone https://github.com/compujuckel/AssettoServer
-cd ScrambleRacePluginGPS/ScramblePlugin
-dotnet build -c Release -r linux-x64
-# Output: bin/Release/net8.0/linux-x64/
+cd ScrambleRacePluginGPS
+
+# AssettoServer 0.54 / .NET 8 build
+dotnet publish ScramblePlugin/ScramblePlugin.csproj -c Release -r linux-x64 --no-self-contained
+# Output: out-linux-x64/plugins/ScramblePlugin/
+
+# AssettoServer 0.55 / .NET 9 build
+dotnet publish ScramblePlugin/ScramblePlugin.csproj -c Release -r linux-x64 --no-self-contained -p:AsServer=055
+# Output: out-linux-x64-055/plugins/ScramblePlugin/
 ```
 
 ---
