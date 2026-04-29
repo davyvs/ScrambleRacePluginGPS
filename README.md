@@ -62,20 +62,27 @@ Click **Stop / Clear GPS** in the panel, or simply arrive at the destination.
 
 ## For Server Admins
 
-### Which Version Do I Need?
+### Version Guide
 
-This repository ships two compiled Linux x64 plugin builds:
+ScramblePlugin is shipped as two different compiled Linux x64 builds. Pick the build that matches your AssettoServer version:
 
-| AssettoServer version | Use this folder |
-|---|---|
-| **AssettoServer 0.54 / .NET 8** | `out-linux-x64/plugins/ScramblePlugin/` |
-| **AssettoServer 0.55 / .NET 9** | `out-linux-x64-055/plugins/ScramblePlugin/` |
+| AssettoServer version | Runtime | Prebuilt plugin folder |
+|---|---|---|
+| **AssettoServer 0.54** | .NET 8 | `out-linux-x64/plugins/ScramblePlugin/` |
+| **AssettoServer 0.55** | .NET 9 | `out-linux-x64-055/plugins/ScramblePlugin/` |
 
-Use the folder that matches your AssettoServer version. The DLLs are not interchangeable: the 0.54 build targets `net8.0`, while the 0.55 build targets `net9.0` and uses the AssettoServer 0.55 plugin startup path.
+Do not mix these builds. The 0.54 DLL targets `net8.0`; the 0.55 DLL targets `net9.0` and uses a different service registration path for AssettoServer 0.55.
 
-### Installation
+### Prebuilt Install: AssettoServer 0.54
 
-1. **Copy the correct plugin build** to your server's plugins folder:
+Use this when your server is running AssettoServer 0.54.
+
+1. Copy the full plugin folder from:
+   ```
+   out-linux-x64/plugins/ScramblePlugin/
+   ```
+
+2. Paste it into your server's `plugins` folder:
    ```
    plugins/
    └── ScramblePlugin/
@@ -84,18 +91,55 @@ Use the folder that matches your AssettoServer version. The DLLs are not interch
        └── ScramblePlugin.runtimeconfig.json
    ```
 
-2. **Enable the plugin** in `cfg/extra_cfg.yml`:
+3. Enable the plugin in `cfg/extra_cfg.yml`:
    ```yaml
    EnablePlugins:
      - ScramblePlugin
    ```
 
-3. **Enable CSP client messages** (required for the GPS HUD):
+4. Enable CSP client messages. This is required because the GPS HUD is served to clients as an embedded CSP Lua script:
    ```yaml
    EnableClientMessages: true
    ```
 
+5. Add the `!ScrambleConfiguration` section shown below, then restart the server.
+
 That's it — the GPS Lua script is embedded in the plugin and auto-served to all connecting clients. No separate script hosting needed.
+
+---
+
+### Prebuilt Install: AssettoServer 0.55
+
+Use this when your server is running AssettoServer 0.55.
+
+1. Copy the full plugin folder from:
+   ```
+   out-linux-x64-055/plugins/ScramblePlugin/
+   ```
+
+2. Paste it into your server's `plugins` folder:
+   ```
+   plugins/
+   └── ScramblePlugin/
+       ├── ScramblePlugin.dll
+       ├── ScramblePlugin.deps.json
+       └── ScramblePlugin.runtimeconfig.json
+   ```
+
+3. Enable the plugin in `cfg/extra_cfg.yml`:
+   ```yaml
+   EnablePlugins:
+     - ScramblePlugin
+   ```
+
+4. Enable CSP client messages:
+   ```yaml
+   EnableClientMessages: true
+   ```
+
+5. Add the `!ScrambleConfiguration` section shown below, then restart the server.
+
+The GPS Lua script is embedded in both plugin builds and is automatically pushed to connecting clients. Players do not need to manually install a Lua app.
 
 ---
 
@@ -224,18 +268,54 @@ The 0.54 build requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/d
 
 The 0.55 build requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and an AssettoServer 0.55 source checkout at `AssettoServer-055/`.
 
+Expected local source layout:
+
+```text
+ScrambleRacePluginGPS/
+├── ScramblePlugin/
+├── AssettoServer/       # AssettoServer 0.54 source, used by the default build
+└── AssettoServer-055/   # AssettoServer 0.55 source, used with -p:AsServer=055
+```
+
+### Build for AssettoServer 0.54
+
 ```sh
 git clone https://github.com/davyvs/ScrambleRacePluginGPS
 cd ScrambleRacePluginGPS
 
-# AssettoServer 0.54 / .NET 8 build
 dotnet publish ScramblePlugin/ScramblePlugin.csproj -c Release -r linux-x64 --no-self-contained
-# Output: out-linux-x64/plugins/ScramblePlugin/
-
-# AssettoServer 0.55 / .NET 9 build
-dotnet publish ScramblePlugin/ScramblePlugin.csproj -c Release -r linux-x64 --no-self-contained -p:AsServer=055
-# Output: out-linux-x64-055/plugins/ScramblePlugin/
 ```
+
+Output:
+
+```text
+out-linux-x64/plugins/ScramblePlugin/
+├── ScramblePlugin.dll
+├── ScramblePlugin.deps.json
+└── ScramblePlugin.runtimeconfig.json
+```
+
+Copy that `ScramblePlugin/` folder into an AssettoServer 0.54 server's `plugins/` folder.
+
+### Build for AssettoServer 0.55
+
+```sh
+git clone https://github.com/davyvs/ScrambleRacePluginGPS
+cd ScrambleRacePluginGPS
+
+dotnet publish ScramblePlugin/ScramblePlugin.csproj -c Release -r linux-x64 --no-self-contained -p:AsServer=055
+```
+
+Output:
+
+```text
+out-linux-x64-055/plugins/ScramblePlugin/
+├── ScramblePlugin.dll
+├── ScramblePlugin.deps.json
+└── ScramblePlugin.runtimeconfig.json
+```
+
+Copy that `ScramblePlugin/` folder into an AssettoServer 0.55 server's `plugins/` folder.
 
 ---
 
