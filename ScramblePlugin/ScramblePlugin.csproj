@@ -1,16 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework Condition="'$(AsServer)' != '055'">net8.0</TargetFramework>
+        <TargetFramework Condition="'$(AsServer)' == '055'">net9.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <EnableDynamicLoading>true</EnableDynamicLoading>
         <SelfContained>false</SelfContained>
         <DebugType>embedded</DebugType>
-        <PublishDir Condition="'$(RuntimeIdentifier)' == 'linux-x64'">..\out-linux-x64\plugins\$(MSBuildProjectName)\</PublishDir>
-        <PublishDir Condition="'$(RuntimeIdentifier)' == 'linux-arm64'">..\out-linux-arm64\plugins\$(MSBuildProjectName)\</PublishDir>
-        <PublishDir Condition="'$(RuntimeIdentifier)' == 'win-x64'">..\out-win-x64\plugins\$(MSBuildProjectName)\</PublishDir>
+        <!-- 0.54 builds (default) -->
+        <PublishDir Condition="'$(RuntimeIdentifier)' == 'linux-x64' And '$(AsServer)' != '055'">..\out-linux-x64\plugins\$(MSBuildProjectName)\</PublishDir>
+        <PublishDir Condition="'$(RuntimeIdentifier)' == 'linux-arm64' And '$(AsServer)' != '055'">..\out-linux-arm64\plugins\$(MSBuildProjectName)\</PublishDir>
+        <PublishDir Condition="'$(RuntimeIdentifier)' == 'win-x64' And '$(AsServer)' != '055'">..\out-win-x64\plugins\$(MSBuildProjectName)\</PublishDir>
+        <!-- 0.55 builds -->
+        <PublishDir Condition="'$(RuntimeIdentifier)' == 'linux-x64' And '$(AsServer)' == '055'">..\out-linux-x64-055\plugins\$(MSBuildProjectName)\</PublishDir>
+        <PublishDir Condition="'$(RuntimeIdentifier)' == 'linux-arm64' And '$(AsServer)' == '055'">..\out-linux-arm64-055\plugins\$(MSBuildProjectName)\</PublishDir>
+        <PublishDir Condition="'$(RuntimeIdentifier)' == 'win-x64' And '$(AsServer)' == '055'">..\out-win-x64-055\plugins\$(MSBuildProjectName)\</PublishDir>
         <PathMap>$(MSBuildProjectDirectory)=$(MSBuildProjectName)</PathMap>
+        <DefineConstants Condition="'$(AsServer)' == '055'">$(DefineConstants);ASSERVER_055</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -18,12 +25,25 @@
         <EmbeddedResource Include="lua\scramble_gps.lua" />
     </ItemGroup>
 
-    <ItemGroup>
+    <!-- 0.54 references (default) -->
+    <ItemGroup Condition="'$(AsServer)' != '055'">
         <ProjectReference Include="..\AssettoServer\AssettoServer.Shared\AssettoServer.Shared.csproj">
             <Private>false</Private>
             <ExcludeAssets>runtime</ExcludeAssets>
         </ProjectReference>
         <ProjectReference Include="..\AssettoServer\AssettoServer\AssettoServer.csproj">
+            <Private>false</Private>
+            <ExcludeAssets>runtime</ExcludeAssets>
+        </ProjectReference>
+    </ItemGroup>
+
+    <!-- 0.55 references -->
+    <ItemGroup Condition="'$(AsServer)' == '055'">
+        <ProjectReference Include="..\AssettoServer-055\AssettoServer.Shared\AssettoServer.Shared.csproj">
+            <Private>false</Private>
+            <ExcludeAssets>runtime</ExcludeAssets>
+        </ProjectReference>
+        <ProjectReference Include="..\AssettoServer-055\AssettoServer\AssettoServer.csproj">
             <Private>false</Private>
             <ExcludeAssets>runtime</ExcludeAssets>
         </ProjectReference>

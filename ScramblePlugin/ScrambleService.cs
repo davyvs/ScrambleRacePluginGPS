@@ -7,7 +7,9 @@ using AssettoServer.Server.Configuration;
 using AssettoServer.Server.Plugin;
 using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Shared;
+#if !ASSERVER_055
 using AssettoServer.Shared.Services;
+#endif
 using JetBrains.Annotations;
 using Microsoft.Extensions.Hosting;
 using ScramblePlugin.Packets;
@@ -20,7 +22,11 @@ namespace ScramblePlugin;
 /// and handles all server-side race logic including DQ detection and arrival tracking.
 /// </summary>
 [UsedImplicitly]
+#if ASSERVER_055
+public class ScrambleService : BackgroundService
+#else
 public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostart
+#endif
 {
     private readonly EntryCarManager _entryCarManager;
     private readonly ScrambleConfiguration _config;
@@ -51,7 +57,11 @@ public class ScrambleService : CriticalBackgroundService, IAssettoServerAutostar
         ACServerConfiguration serverConfiguration,
         CSPServerScriptProvider scriptProvider,
         Func<EntryCar, EntryCarRaceState> carStateFactory,
+#if ASSERVER_055
+        IHostApplicationLifetime applicationLifetime)
+#else
         IHostApplicationLifetime applicationLifetime) : base(applicationLifetime)
+#endif
     {
         _entryCarManager = entryCarManager;
         _config          = config;
