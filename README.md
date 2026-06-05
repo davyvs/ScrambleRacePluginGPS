@@ -649,7 +649,7 @@ When StartAreas are configured, typing `/scramble` inside an area:
 
 ### Sierra de Cadiz
 
-86 destinations including Grazalema, Olvera, Dam, Coffee Shop, El Gastor, Zahara de la Sierra, race track, pits, and all major road crossings. See the full list in [`ScramblePlugin/lua/scramble_gps.lua`](ScramblePlugin/lua/scramble_gps.lua).
+85 destinations including Grazalema, Olvera, Dam, Coffee Shop, El Gastor, Zahara de la Sierra, race track, pits, and all major road crossings. See the full list in [`ScramblePlugin/lua/scramble_gps.lua`](ScramblePlugin/lua/scramble_gps.lua), or the ready-made [`examples/extra_cfg.sdc.yml`](examples/extra_cfg.sdc.yml).
 
 ---
 
